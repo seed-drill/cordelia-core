@@ -32,6 +32,24 @@ pub type PeerCountFn = Box<
         + Sync,
 >;
 
+/// Peer details for API response.
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerDetail {
+    pub node_id: String,
+    pub addrs: Vec<String>,
+    pub state: String,
+    pub rtt_ms: Option<f64>,
+    pub items_delivered: u64,
+    pub groups: Vec<String>,
+}
+
+/// Callback to get peer list from the node's peer pool.
+pub type PeerListFn = Box<
+    dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<PeerDetail>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Shared state for all API handlers.
 pub struct AppState {
     pub storage: Box<dyn Storage>,
@@ -42,6 +60,7 @@ pub struct AppState {
     pub write_notify: Option<tokio::sync::broadcast::Sender<WriteNotification>>,
     pub shared_groups: Option<std::sync::Arc<tokio::sync::RwLock<Vec<String>>>>,
     pub peer_count_fn: Option<PeerCountFn>,
+    pub peer_list_fn: Option<PeerListFn>,
 }
 
 /// Build the axum router.
@@ -236,6 +255,7 @@ pub struct PeersResponse {
     pub warm: usize,
     pub hot: usize,
     pub total: usize,
+    pub peers: Vec<PeerDetail>,
 }
 
 // ============================================================================
@@ -689,10 +709,17 @@ async fn peers(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl I
         (0, 0)
     };
 
+    let peers = if let Some(f) = &state.peer_list_fn {
+        f().await
+    } else {
+        vec![]
+    };
+
     Json(PeersResponse {
         warm,
         hot,
         total: warm + hot,
+        peers,
     })
     .into_response()
 }

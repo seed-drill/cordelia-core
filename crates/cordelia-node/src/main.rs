@@ -218,7 +218,8 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let pool = peer_pool::PeerPool::new(our_groups.clone());
 
     // Build API state
-    let pool_for_api = pool.clone();
+    let pool_for_count = pool.clone();
+    let pool_for_list = pool.clone();
     let state = Arc::new(AppState {
         storage: Box::new(StorageClone(storage.clone())),
         node_id: identity.node_id_hex(),
@@ -228,8 +229,12 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         write_notify: Some(write_tx),
         shared_groups: Some(shared_groups.clone()),
         peer_count_fn: Some(Box::new(move || {
-            let pool = pool_for_api.clone();
+            let pool = pool_for_count.clone();
             Box::pin(async move { pool.peer_count_by_state().await })
+        })),
+        peer_list_fn: Some(Box::new(move || {
+            let pool = pool_for_list.clone();
+            Box::pin(async move { pool.peer_details().await })
         })),
     });
 

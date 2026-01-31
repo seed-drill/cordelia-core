@@ -174,6 +174,27 @@ impl PeerPool {
         let idx = rand::thread_rng().gen_range(0..peers.len());
         Some(peers[idx].clone())
     }
+
+    /// Get details of all connected peers for the API.
+    pub async fn peer_details(&self) -> Vec<cordelia_api::PeerDetail> {
+        self.inner
+            .read()
+            .await
+            .values()
+            .map(|h| {
+                let addr = h.connection.remote_address().to_string();
+                let rtt = h.connection.rtt();
+                cordelia_api::PeerDetail {
+                    node_id: hex::encode(h.node_id),
+                    addrs: vec![addr],
+                    state: h.state.name().to_string(),
+                    rtt_ms: Some(rtt.as_secs_f64() * 1000.0),
+                    items_delivered: 0, // TODO: track this per-connection
+                    groups: h.groups.clone(),
+                }
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
