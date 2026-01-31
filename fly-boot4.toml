@@ -1,0 +1,26 @@
+app = "cordelia-boot4"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile.boot4"
+
+[env]
+  RUST_LOG = "info,cordelia_node=debug"
+
+[[services]]
+  internal_port = 9474
+  protocol = "udp"
+
+  [[services.ports]]
+    port = 9474
+
+[[services]]
+  internal_port = 9473
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 9473
+
+[mounts]
+  source = "cordelia_data"
+  destination = "/home/cordelia/.cordelia"
