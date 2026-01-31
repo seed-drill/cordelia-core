@@ -605,7 +605,8 @@ pub async fn handle_group_exchange(
 
             // Update peer's groups and recompute intersection
             let old_handle = pool.get(peer_node_id).await;
-            pool.update_peer_groups(peer_node_id, exchange.groups.clone()).await;
+            pool.update_peer_groups(peer_node_id, exchange.groups.clone())
+                .await;
             let new_handle = pool.get(peer_node_id).await;
 
             if let (Some(old), Some(new)) = (old_handle, new_handle) {

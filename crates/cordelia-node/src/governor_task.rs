@@ -115,10 +115,13 @@ pub async fn run_governor_loop(
                             {
                                 Ok(peer_id) => {
                                     // Immediate group exchange after handshake (R3-024 fix)
-                                    if let Ok(fresh_groups) = crate::mini_protocols::request_group_exchange(
-                                        &conn,
-                                        &our_groups,
-                                    ).await {
+                                    if let Ok(fresh_groups) =
+                                        crate::mini_protocols::request_group_exchange(
+                                            &conn,
+                                            &our_groups,
+                                        )
+                                        .await
+                                    {
                                         pool.update_peer_groups(&peer_id, fresh_groups).await;
                                     }
 
