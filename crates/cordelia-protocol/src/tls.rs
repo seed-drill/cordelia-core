@@ -16,10 +16,7 @@ pub fn generate_self_signed_cert(
     pkcs8_der: &[u8],
 ) -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
     let pkcs8_key = rustls::pki_types::PrivatePkcs8KeyDer::from(pkcs8_der.to_vec());
-    let key_pair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
-        &pkcs8_key,
-        &rcgen::PKCS_ED25519,
-    )?;
+    let key_pair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(&pkcs8_key, &rcgen::PKCS_ED25519)?;
 
     let mut params = rcgen::CertificateParams::new(vec!["cordelia-node.local".to_string()])?;
     params.distinguished_name = rcgen::DistinguishedName::new();
@@ -69,8 +66,8 @@ pub fn build_server_config(
 /// Build a QUIC client config that skips server certificate verification.
 ///
 /// We authenticate peers at the handshake mini-protocol layer, not TLS.
-pub fn build_client_config(
-) -> Result<quinn::ClientConfig, Box<dyn std::error::Error + Send + Sync>> {
+pub fn build_client_config() -> Result<quinn::ClientConfig, Box<dyn std::error::Error + Send + Sync>>
+{
     let mut client_crypto = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(SkipServerVerification))

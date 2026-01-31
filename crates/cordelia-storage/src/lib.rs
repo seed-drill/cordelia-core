@@ -128,7 +128,8 @@ pub trait Storage: Send + Sync {
         limit: u32,
     ) -> Result<Vec<ItemHeader>>;
 
-    fn write_group(&self, id: &str, name: &str, culture: &str, security_policy: &str) -> Result<()>;
+    fn write_group(&self, id: &str, name: &str, culture: &str, security_policy: &str)
+        -> Result<()>;
     fn read_group(&self, id: &str) -> Result<Option<GroupRow>>;
     fn list_groups(&self) -> Result<Vec<GroupRow>>;
     fn list_members(&self, group_id: &str) -> Result<Vec<GroupMemberRow>>;
@@ -136,7 +137,8 @@ pub trait Storage: Send + Sync {
 
     fn add_member(&self, group_id: &str, entity_id: &str, role: &str) -> Result<()>;
     fn remove_member(&self, group_id: &str, entity_id: &str) -> Result<bool>;
-    fn update_member_posture(&self, group_id: &str, entity_id: &str, posture: &str) -> Result<bool>;
+    fn update_member_posture(&self, group_id: &str, entity_id: &str, posture: &str)
+        -> Result<bool>;
     fn delete_group(&self, id: &str) -> Result<bool>;
 
     fn log_access(&self, entry: &AccessLogEntry) -> Result<()>;
@@ -427,7 +429,13 @@ impl Storage for SqliteStorage {
         }
     }
 
-    fn write_group(&self, id: &str, name: &str, culture: &str, security_policy: &str) -> Result<()> {
+    fn write_group(
+        &self,
+        id: &str,
+        name: &str,
+        culture: &str,
+        security_policy: &str,
+    ) -> Result<()> {
         let conn = self.db()?;
         conn.execute(
             "INSERT INTO groups (id, name, culture, security_policy, created_at, updated_at)
@@ -547,7 +555,12 @@ impl Storage for SqliteStorage {
         Ok(changes > 0)
     }
 
-    fn update_member_posture(&self, group_id: &str, entity_id: &str, posture: &str) -> Result<bool> {
+    fn update_member_posture(
+        &self,
+        group_id: &str,
+        entity_id: &str,
+        posture: &str,
+    ) -> Result<bool> {
         let conn = self.db()?;
         let changes = conn.execute(
             "UPDATE group_members SET posture = ?3 WHERE group_id = ?1 AND entity_id = ?2",
@@ -584,11 +597,9 @@ impl Storage for SqliteStorage {
     fn read_l2_index(&self) -> Result<Option<Vec<u8>>> {
         let conn = self.db()?;
         let result = conn
-            .query_row(
-                "SELECT data FROM l2_index WHERE id = 1",
-                [],
-                |row| row.get::<_, Vec<u8>>(0),
-            )
+            .query_row("SELECT data FROM l2_index WHERE id = 1", [], |row| {
+                row.get::<_, Vec<u8>>(0)
+            })
             .optional()?;
         Ok(result)
     }
@@ -624,9 +635,8 @@ impl Storage for SqliteStorage {
         }
 
         let conn = self.db()?;
-        let mut stmt = conn.prepare(
-            "SELECT item_id FROM l2_fts WHERE l2_fts MATCH ?1 ORDER BY rank LIMIT ?2",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT item_id FROM l2_fts WHERE l2_fts MATCH ?1 ORDER BY rank LIMIT ?2")?;
 
         let ids = stmt
             .query_map(params![safe_query, limit], |row| row.get::<_, String>(0))?
@@ -702,15 +712,18 @@ mod tests {
             conn.execute(
                 "INSERT INTO groups (id, name, culture, security_policy) VALUES (?1, ?2, ?3, ?4)",
                 params!["team-1", "Team One", "{}", "{}"],
-            ).unwrap();
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO group_members (group_id, entity_id, role) VALUES (?1, ?2, ?3)",
                 params!["team-1", "russell", "owner"],
-            ).unwrap();
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO group_members (group_id, entity_id, role) VALUES (?1, ?2, ?3)",
                 params!["team-1", "martin", "member"],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let group = storage.read_group("team-1").unwrap().unwrap();
@@ -719,7 +732,10 @@ mod tests {
         let members = storage.list_members("team-1").unwrap();
         assert_eq!(members.len(), 2);
 
-        let membership = storage.get_membership("team-1", "russell").unwrap().unwrap();
+        let membership = storage
+            .get_membership("team-1", "russell")
+            .unwrap()
+            .unwrap();
         assert_eq!(membership.role, "owner");
     }
 
@@ -774,7 +790,12 @@ mod tests {
         let (_dir, storage) = test_db();
 
         storage
-            .write_group("grp-1", "Test Group", r#"{"broadcast_eagerness":"chatty"}"#, "{}")
+            .write_group(
+                "grp-1",
+                "Test Group",
+                r#"{"broadcast_eagerness":"chatty"}"#,
+                "{}",
+            )
             .unwrap();
 
         let group = storage.read_group("grp-1").unwrap().unwrap();
@@ -783,7 +804,12 @@ mod tests {
 
         // Upsert: update name
         storage
-            .write_group("grp-1", "Updated Name", r#"{"broadcast_eagerness":"moderate"}"#, "{}")
+            .write_group(
+                "grp-1",
+                "Updated Name",
+                r#"{"broadcast_eagerness":"moderate"}"#,
+                "{}",
+            )
             .unwrap();
         let group2 = storage.read_group("grp-1").unwrap().unwrap();
         assert_eq!(group2.name, "Updated Name");
@@ -836,12 +862,16 @@ mod tests {
             .unwrap();
         storage.add_member("grp-p", "carol", "member").unwrap();
 
-        assert!(storage.update_member_posture("grp-p", "carol", "emcon").unwrap());
+        assert!(storage
+            .update_member_posture("grp-p", "carol", "emcon")
+            .unwrap());
         let carol = storage.get_membership("grp-p", "carol").unwrap().unwrap();
         assert_eq!(carol.posture.as_deref(), Some("emcon"));
 
         // Non-existent member
-        assert!(!storage.update_member_posture("grp-p", "nobody", "silent").unwrap());
+        assert!(!storage
+            .update_member_posture("grp-p", "nobody", "silent")
+            .unwrap());
     }
 
     #[test]

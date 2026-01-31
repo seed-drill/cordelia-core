@@ -1,0 +1,26 @@
+[node]
+identity_key = "/home/cordelia/.cordelia/node.key"
+api_transport = "http"
+api_addr = "0.0.0.0:9473"
+database = "/home/cordelia/.cordelia/cordelia.db"
+entity_id = "boot3"
+
+[network]
+listen_addr = "0.0.0.0:9474"
+
+[[network.bootnodes]]
+addr = "boot1.cordelia.seeddrill.io:9474"
+
+[[network.bootnodes]]
+addr = "boot2.cordelia.seeddrill.io:9474"
+
+[governor]
+hot_min = 2
+hot_max = 20
+warm_min = 10
+warm_max = 50
+
+[replication]
+sync_interval_moderate_secs = 300
+tombstone_retention_days = 7
+max_batch_size = 100

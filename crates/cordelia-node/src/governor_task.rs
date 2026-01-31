@@ -17,6 +17,7 @@ use crate::config::BootnodeEntry;
 use crate::peer_pool::PeerPool;
 use crate::quic_transport::QuicTransport;
 
+#[allow(clippy::too_many_arguments)]
 /// Run the governor loop until shutdown.
 pub async fn run_governor_loop(
     governor: Arc<Mutex<Governor>>,
@@ -29,6 +30,10 @@ pub async fn run_governor_loop(
     mut shutdown: broadcast::Receiver<()>,
     shutdown_tx: broadcast::Sender<()>,
 ) {
+    if bootnodes.is_empty() {
+        tracing::warn!("no bootnodes configured -- node will only accept inbound connections");
+    }
+
     // Seed bootnodes as cold peers (resolve DNS hostnames to IPs)
     {
         let mut gov = governor.lock().await;
@@ -57,6 +62,9 @@ pub async fn run_governor_loop(
     }
 
     let tick_interval = cordelia_governor::TICK_INTERVAL;
+    let mut tick_count: u64 = 0;
+    // Exchange groups every 6 ticks (60s at 10s tick interval)
+    const GROUP_EXCHANGE_EVERY: u64 = 6;
 
     loop {
         tokio::select! {
@@ -144,7 +152,10 @@ pub async fn run_governor_loop(
                                     let ka_shutdown = shutdown_tx.subscribe();
                                     tokio::spawn(async move {
                                         crate::mini_protocols::run_keepalive_loop(
-                                            &ka_conn, &peer_id, &ka_gov, ka_shutdown,
+                                            &ka_conn,
+                                            &peer_id,
+                                            &ka_gov,
+                                            ka_shutdown,
                                         )
                                         .await;
                                     });
@@ -156,7 +167,14 @@ pub async fn run_governor_loop(
                                     let gov2 = governor.clone();
                                     tokio::spawn(async move {
                                         crate::quic_transport::run_connection(
-                                            conn, peer_id, pool2, storage2, our_node_id, groups2, Some(gov2), false,
+                                            conn,
+                                            peer_id,
+                                            pool2,
+                                            storage2,
+                                            our_node_id,
+                                            groups2,
+                                            Some(gov2),
+                                            false,
                                         )
                                         .await;
                                     });
@@ -175,6 +193,44 @@ pub async fn run_governor_loop(
         }
 
         let (warm, hot) = pool.peer_count_by_state().await;
-        tracing::debug!(warm, hot, "governor tick complete");
+        tracing::debug!(warm, hot, tick = tick_count, "governor tick complete");
+
+        // Periodic group exchange with hot peers
+        tick_count += 1;
+        if tick_count.is_multiple_of(GROUP_EXCHANGE_EVERY) {
+            let hot_peers = pool.active_peers().await;
+            let groups = our_groups.clone();
+            for peer in hot_peers {
+                let groups = groups.clone();
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    match crate::mini_protocols::request_group_exchange(&peer.connection, &groups)
+                        .await
+                    {
+                        Ok(peer_groups) => {
+                            let old_intersection = peer.group_intersection.clone();
+                            pool.update_peer_groups(&peer.node_id, peer_groups).await;
+                            let new_handle = pool.get(&peer.node_id).await;
+                            if let Some(h) = new_handle {
+                                if h.group_intersection != old_intersection {
+                                    tracing::info!(
+                                        peer = hex::encode(peer.node_id),
+                                        old = ?old_intersection,
+                                        new = ?h.group_intersection,
+                                        "group intersection updated"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                peer = hex::encode(peer.node_id),
+                                "group exchange failed: {e}"
+                            );
+                        }
+                    }
+                });
+            }
+        }
     }
 }

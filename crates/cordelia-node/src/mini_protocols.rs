@@ -27,9 +27,7 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 // Codec helpers -- read/write a single Message on a QUIC stream
 // ============================================================================
 
-async fn read_message(
-    recv: &mut quinn::RecvStream,
-) -> Result<Message, BoxError> {
+async fn read_message(recv: &mut quinn::RecvStream) -> Result<Message, BoxError> {
     // Read 4-byte length prefix
     let mut len_buf = [0u8; 4];
     recv.read_exact(&mut len_buf).await?;
@@ -49,10 +47,7 @@ async fn read_message(
     Ok(msg)
 }
 
-async fn write_message(
-    send: &mut quinn::SendStream,
-    msg: &Message,
-) -> Result<(), BoxError> {
+async fn write_message(send: &mut quinn::SendStream, msg: &Message) -> Result<(), BoxError> {
     let mut codec = MessageCodec;
     let mut buf = BytesMut::new();
     codec.encode(msg.clone(), &mut buf)?;
@@ -91,7 +86,11 @@ pub async fn handle_inbound_handshake(
     let mut proto = [0u8; 1];
     recv.read_exact(&mut proto).await?;
     if proto[0] != crate::quic_transport::PROTO_HANDSHAKE {
-        return Err(format!("expected handshake protocol byte 0x01, got {:#04x}", proto[0]).into());
+        return Err(format!(
+            "expected handshake protocol byte 0x01, got {:#04x}",
+            proto[0]
+        )
+        .into());
     }
 
     // Read propose
@@ -147,12 +146,14 @@ pub async fn handle_inbound_handshake(
         conn.clone(),
         propose.groups,
         PeerState::Warm,
+        version,
     )
     .await;
 
     tracing::info!(
         peer = hex::encode(propose.node_id),
         remote = %conn.remote_address(),
+        protocol_version = version,
         "inbound handshake complete"
     );
 
@@ -204,12 +205,14 @@ pub async fn handle_outbound_handshake(
         conn.clone(),
         accept.groups,
         PeerState::Warm,
+        accept.version,
     )
     .await;
 
     tracing::info!(
         peer = hex::encode(accept.node_id),
         remote = %conn.remote_address(),
+        protocol_version = accept.version,
         "outbound handshake complete"
     );
 
@@ -297,33 +300,33 @@ pub async fn run_keepalive_loop(
         if write_message(&mut send, &ping).await.is_err() {
             missed += 1;
             if missed >= cordelia_protocol::KEEPALIVE_MISS_LIMIT {
-                tracing::warn!(peer = hex::encode(node_id), "peer dead: {missed} missed pings");
+                tracing::warn!(
+                    peer = hex::encode(node_id),
+                    "peer dead: {missed} missed pings"
+                );
                 return;
             }
             continue;
         }
 
         // Wait for pong with timeout
-        let pong_result = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            read_message(&mut recv),
-        )
-        .await;
+        let pong_result =
+            tokio::time::timeout(std::time::Duration::from_secs(10), read_message(&mut recv)).await;
 
         match pong_result {
             Ok(Ok(Message::Pong(pong))) => {
                 missed = 0;
                 let rtt_ns = now_ns().saturating_sub(pong.sent_at_ns);
                 let rtt_ms = rtt_ns as f64 / 1_000_000.0;
-                governor
-                    .lock()
-                    .await
-                    .record_activity(node_id, Some(rtt_ms));
+                governor.lock().await.record_activity(node_id, Some(rtt_ms));
             }
             _ => {
                 missed += 1;
                 if missed >= cordelia_protocol::KEEPALIVE_MISS_LIMIT {
-                    tracing::warn!(peer = hex::encode(node_id), "peer dead: {missed} missed pings");
+                    tracing::warn!(
+                        peer = hex::encode(node_id),
+                        "peer dead: {missed} missed pings"
+                    );
                     return;
                 }
             }
@@ -368,6 +371,7 @@ pub async fn handle_peer_share(
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Request peers from a remote node.
 pub async fn request_peers(
     conn: &quinn::Connection,
@@ -560,11 +564,7 @@ pub async fn handle_memory_push(
                     }
                     cordelia_replication::ReceiveOutcome::Rejected(reason) => {
                         rejected += 1;
-                        tracing::warn!(
-                            item_id = &item.item_id,
-                            reason,
-                            "push: rejected"
-                        );
+                        tracing::warn!(item_id = &item.item_id, reason, "push: rejected");
                     }
                 }
             }
@@ -579,6 +579,65 @@ pub async fn handle_memory_push(
     }
 
     Ok(())
+}
+
+// ============================================================================
+// 7. Group exchange -- refresh group intersection post-handshake
+// ============================================================================
+
+/// Handle inbound group exchange: receive peer's groups, send ours, update pool.
+pub async fn handle_group_exchange(
+    mut send: quinn::SendStream,
+    mut recv: quinn::RecvStream,
+    _pool: &PeerPool,
+    our_groups: &[String],
+) -> Result<(), BoxError> {
+    let msg = read_message(&mut recv).await?;
+
+    match msg {
+        Message::GroupExchange(exchange) => {
+            // Send our groups back
+            let resp = Message::GroupExchangeResponse(GroupExchangeResponse {
+                groups: our_groups.to_vec(),
+            });
+            write_message(&mut send, &resp).await?;
+
+            // Find the peer by connection and update their groups
+            // We need the node_id -- extract from pool by scanning for matching connection
+            // For now, log the exchange; the caller handles pool update
+            tracing::debug!(
+                peer_groups = ?exchange.groups,
+                "received group exchange"
+            );
+        }
+        _ => {
+            tracing::debug!("unexpected message in group-exchange stream");
+        }
+    }
+
+    Ok(())
+}
+
+/// Request group exchange from a peer: send our groups, receive theirs.
+/// Returns the peer's current groups.
+pub async fn request_group_exchange(
+    conn: &quinn::Connection,
+    our_groups: &[String],
+) -> Result<Vec<String>, BoxError> {
+    let (mut send, mut recv) = conn.open_bi().await?;
+    send.write_all(&[crate::quic_transport::PROTO_GROUP_EXCHANGE])
+        .await?;
+
+    let req = Message::GroupExchange(GroupExchange {
+        groups: our_groups.to_vec(),
+    });
+    write_message(&mut send, &req).await?;
+
+    let msg = read_message(&mut recv).await?;
+    match msg {
+        Message::GroupExchangeResponse(resp) => Ok(resp.groups),
+        other => Err(format!("expected GroupExchangeResponse, got {other:?}").into()),
+    }
 }
 
 #[cfg(test)]

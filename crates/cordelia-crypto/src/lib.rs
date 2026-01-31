@@ -134,8 +134,8 @@ impl Aes256GcmProvider {
             .fill(&mut iv_bytes)
             .map_err(|_| CryptoError::EncryptionFailed("RNG failure".into()))?;
 
-        let nonce =
-            Nonce::try_assume_unique_for_key(&iv_bytes).map_err(|_| CryptoError::EncryptionFailed("nonce error".into()))?;
+        let nonce = Nonce::try_assume_unique_for_key(&iv_bytes)
+            .map_err(|_| CryptoError::EncryptionFailed("nonce error".into()))?;
 
         // ring appends the auth tag to the ciphertext
         let mut in_out = plaintext.to_vec();

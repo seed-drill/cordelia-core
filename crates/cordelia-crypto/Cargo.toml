@@ -1,6 +1,6 @@
 [package]
 name = "cordelia-crypto"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "AES-256-GCM encryption and Ed25519 identity for Cordelia"
 

@@ -90,10 +90,7 @@ impl ReplicationEngine {
     ) -> ReceiveOutcome {
         // 1. Validate group membership
         if !our_groups.contains(&item.group_id) {
-            return ReceiveOutcome::Rejected(format!(
-                "not a member of group {}",
-                item.group_id
-            ));
+            return ReceiveOutcome::Rejected(format!("not a member of group {}", item.group_id));
         }
 
         // 2. Validate checksum
@@ -177,8 +174,7 @@ mod tests {
             ..Default::default()
         };
 
-        let action =
-            engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1);
+        let action = engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1);
 
         match action {
             OutboundAction::BroadcastItem { group_id, item } => {
@@ -195,8 +191,7 @@ mod tests {
         let engine = default_engine();
         let culture = GroupCulture::default();
 
-        let action =
-            engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1);
+        let action = engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1);
 
         match action {
             OutboundAction::BroadcastHeader { group_id, header } => {
@@ -215,8 +210,7 @@ mod tests {
             ..Default::default()
         };
 
-        let action =
-            engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1);
+        let action = engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1);
 
         assert!(matches!(action, OutboundAction::None));
     }

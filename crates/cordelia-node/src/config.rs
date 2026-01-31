@@ -98,22 +98,54 @@ impl Default for ReplicationSection {
 }
 
 // Default value functions
-fn default_identity_key() -> String { "~/.cordelia/node.key".into() }
-fn default_api_transport() -> String { "unix".into() }
-fn default_database() -> String { "~/cordelia/memory/cordelia.db".into() }
-fn default_entity_id() -> String { "default".into() }
-fn default_listen_addr() -> String { "0.0.0.0:9474".into() }
-fn default_2() -> usize { 2 }
-fn default_10() -> usize { 10 }
-fn default_20() -> usize { 20 }
-fn default_50() -> usize { 50 }
-fn default_100() -> usize { 100 }
-fn default_3600() -> u64 { 3600 }
-fn default_churn_fraction() -> f64 { 0.2 }
-fn default_300() -> u64 { 300 }
-fn default_900() -> u64 { 900 }
-fn default_7() -> u32 { 7 }
-fn default_batch() -> u32 { 100 }
+fn default_identity_key() -> String {
+    "~/.cordelia/node.key".into()
+}
+fn default_api_transport() -> String {
+    "unix".into()
+}
+fn default_database() -> String {
+    "~/cordelia/memory/cordelia.db".into()
+}
+fn default_entity_id() -> String {
+    "default".into()
+}
+fn default_listen_addr() -> String {
+    "0.0.0.0:9474".into()
+}
+fn default_2() -> usize {
+    2
+}
+fn default_10() -> usize {
+    10
+}
+fn default_20() -> usize {
+    20
+}
+fn default_50() -> usize {
+    50
+}
+fn default_100() -> usize {
+    100
+}
+fn default_3600() -> u64 {
+    3600
+}
+fn default_churn_fraction() -> f64 {
+    0.2
+}
+fn default_300() -> u64 {
+    300
+}
+fn default_900() -> u64 {
+    900
+}
+fn default_7() -> u32 {
+    7
+}
+fn default_batch() -> u32 {
+    100
+}
 
 impl NodeConfig {
     /// Load config from file, or create default if missing.
@@ -191,7 +223,10 @@ tombstone_retention_days = 7
         let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.node.entity_id, "russell");
         assert_eq!(cfg.network.bootnodes.len(), 2);
-        assert_eq!(cfg.network.bootnodes[0].addr, "russell.cordelia.seeddrill.io:9474");
+        assert_eq!(
+            cfg.network.bootnodes[0].addr,
+            "russell.cordelia.seeddrill.io:9474"
+        );
         assert_eq!(cfg.governor.hot_min, 2);
     }
 

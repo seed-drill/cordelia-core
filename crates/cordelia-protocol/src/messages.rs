@@ -35,6 +35,10 @@ pub enum Message {
 
     // Memory push ack
     PushAck(PushAck),
+
+    // Group exchange
+    GroupExchange(GroupExchange),
+    GroupExchangeResponse(GroupExchangeResponse),
 }
 
 // ============================================================================
@@ -167,6 +171,20 @@ pub struct FetchedItem {
 pub struct PushAck {
     pub stored: u32,
     pub rejected: u32,
+}
+
+// ============================================================================
+// Group Exchange
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupExchange {
+    pub groups: Vec<GroupId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupExchangeResponse {
+    pub groups: Vec<GroupId>,
 }
 
 // ============================================================================

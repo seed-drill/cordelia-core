@@ -121,11 +121,7 @@ async fn main() -> anyhow::Result<()> {
 
 /// Make a POST request to the local node API and print the JSON response.
 async fn cli_api_call(cfg: &config::NodeConfig, path: &str, body: &str) -> anyhow::Result<()> {
-    let addr = cfg
-        .node
-        .api_addr
-        .as_deref()
-        .unwrap_or("127.0.0.1:9473");
+    let addr = cfg.node.api_addr.as_deref().unwrap_or("127.0.0.1:9473");
     let url = format!("http://{}{}", addr, path);
 
     let token_path = expand_tilde("~/.cordelia/node-token");
@@ -165,7 +161,22 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let key_path = expand_tilde(&cfg.node.identity_key);
     let identity = NodeIdentity::load_or_create(&key_path)?;
     let our_node_id = *identity.node_id();
-    tracing::info!(node_id = %identity.node_id_hex(), "starting cordelia-node");
+    tracing::info!(
+        node_id = %identity.node_id_hex(),
+        version = env!("CARGO_PKG_VERSION"),
+        protocol_min = cordelia_protocol::VERSION_MIN,
+        protocol_max = cordelia_protocol::VERSION_MAX,
+        protocol_magic = format_args!("{:#010x}", cordelia_protocol::PROTOCOL_MAGIC),
+        entity_id = %cfg.node.entity_id,
+        "starting cordelia-node"
+    );
+    tracing::info!(
+        listen = %cfg.network.listen_addr,
+        api_transport = %cfg.node.api_transport,
+        api_addr = cfg.node.api_addr.as_deref().unwrap_or("(default)"),
+        bootnodes = cfg.network.bootnodes.len(),
+        "network config"
+    );
 
     // Open storage
     let db_path = expand_tilde(&cfg.node.database);
@@ -192,7 +203,8 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
 
     // Write notification channel (API -> replication task)
-    let (write_tx, write_rx) = tokio::sync::broadcast::channel::<cordelia_api::WriteNotification>(256);
+    let (write_tx, write_rx) =
+        tokio::sync::broadcast::channel::<cordelia_api::WriteNotification>(256);
 
     // Build QUIC transport
     let listen_addr: std::net::SocketAddr = cfg.network.listen_addr.parse()?;
@@ -272,7 +284,14 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let shutdown_tx_clone = shutdown_tx.clone();
         tokio::spawn(async move {
             governor_task::run_governor_loop(
-                governor, pool, transport, storage, bootnodes, our_node_id, groups, shutdown,
+                governor,
+                pool,
+                transport,
+                storage,
+                bootnodes,
+                our_node_id,
+                groups,
+                shutdown,
                 shutdown_tx_clone,
             )
             .await;
@@ -287,7 +306,12 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let shutdown = shutdown_tx.subscribe();
         tokio::spawn(async move {
             replication_task::run_replication_loop(
-                repl_engine, pool, storage, shared_groups, write_rx, shutdown,
+                repl_engine,
+                pool,
+                storage,
+                shared_groups,
+                write_rx,
+                shutdown,
             )
             .await;
         })
@@ -298,11 +322,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
 
     let api_handle = match cfg.node.api_transport.as_str() {
         "http" => {
-            let addr = cfg
-                .node
-                .api_addr
-                .as_deref()
-                .unwrap_or("127.0.0.1:9473");
+            let addr = cfg.node.api_addr.as_deref().unwrap_or("127.0.0.1:9473");
             tracing::info!(addr, "API listening (HTTP)");
             let listener = tokio::net::TcpListener::bind(addr).await?;
             let shutdown = shutdown_tx.subscribe();
@@ -400,7 +420,10 @@ impl cordelia_storage::Storage for StorageClone {
     fn write_l1(&self, user_id: &str, data: &[u8]) -> cordelia_storage::Result<()> {
         self.0.write_l1(user_id, data)
     }
-    fn read_l2_item(&self, id: &str) -> cordelia_storage::Result<Option<cordelia_storage::L2ItemRow>> {
+    fn read_l2_item(
+        &self,
+        id: &str,
+    ) -> cordelia_storage::Result<Option<cordelia_storage::L2ItemRow>> {
         self.0.read_l2_item(id)
     }
     fn write_l2_item(&self, item: &cordelia_storage::L2ItemWrite) -> cordelia_storage::Result<()> {
@@ -409,7 +432,10 @@ impl cordelia_storage::Storage for StorageClone {
     fn delete_l2_item(&self, id: &str) -> cordelia_storage::Result<bool> {
         self.0.delete_l2_item(id)
     }
-    fn read_l2_item_meta(&self, id: &str) -> cordelia_storage::Result<Option<cordelia_storage::L2ItemMeta>> {
+    fn read_l2_item_meta(
+        &self,
+        id: &str,
+    ) -> cordelia_storage::Result<Option<cordelia_storage::L2ItemMeta>> {
         self.0.read_l2_item_meta(id)
     }
     fn list_group_items(
@@ -420,7 +446,13 @@ impl cordelia_storage::Storage for StorageClone {
     ) -> cordelia_storage::Result<Vec<cordelia_storage::ItemHeader>> {
         self.0.list_group_items(group_id, since, limit)
     }
-    fn write_group(&self, id: &str, name: &str, culture: &str, security_policy: &str) -> cordelia_storage::Result<()> {
+    fn write_group(
+        &self,
+        id: &str,
+        name: &str,
+        culture: &str,
+        security_policy: &str,
+    ) -> cordelia_storage::Result<()> {
         self.0.write_group(id, name, culture, security_policy)
     }
     fn read_group(&self, id: &str) -> cordelia_storage::Result<Option<cordelia_storage::GroupRow>> {
@@ -429,7 +461,10 @@ impl cordelia_storage::Storage for StorageClone {
     fn list_groups(&self) -> cordelia_storage::Result<Vec<cordelia_storage::GroupRow>> {
         self.0.list_groups()
     }
-    fn list_members(&self, group_id: &str) -> cordelia_storage::Result<Vec<cordelia_storage::GroupMemberRow>> {
+    fn list_members(
+        &self,
+        group_id: &str,
+    ) -> cordelia_storage::Result<Vec<cordelia_storage::GroupMemberRow>> {
         self.0.list_members(group_id)
     }
     fn get_membership(
@@ -439,13 +474,23 @@ impl cordelia_storage::Storage for StorageClone {
     ) -> cordelia_storage::Result<Option<cordelia_storage::GroupMemberRow>> {
         self.0.get_membership(group_id, entity_id)
     }
-    fn add_member(&self, group_id: &str, entity_id: &str, role: &str) -> cordelia_storage::Result<()> {
+    fn add_member(
+        &self,
+        group_id: &str,
+        entity_id: &str,
+        role: &str,
+    ) -> cordelia_storage::Result<()> {
         self.0.add_member(group_id, entity_id, role)
     }
     fn remove_member(&self, group_id: &str, entity_id: &str) -> cordelia_storage::Result<bool> {
         self.0.remove_member(group_id, entity_id)
     }
-    fn update_member_posture(&self, group_id: &str, entity_id: &str, posture: &str) -> cordelia_storage::Result<bool> {
+    fn update_member_posture(
+        &self,
+        group_id: &str,
+        entity_id: &str,
+        posture: &str,
+    ) -> cordelia_storage::Result<bool> {
         self.0.update_member_posture(group_id, entity_id, posture)
     }
     fn delete_group(&self, id: &str) -> cordelia_storage::Result<bool> {
@@ -466,9 +511,9 @@ impl cordelia_storage::Storage for StorageClone {
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
+    if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home) = dirs_or_home() {
-            return home.join(&path[2..]);
+            return home.join(stripped);
         }
     }
     PathBuf::from(path)
@@ -539,10 +584,8 @@ mod tests {
         let addr_a: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let addr_b: SocketAddr = "127.0.0.1:0".parse().unwrap();
 
-        let transport_a =
-            quic_transport::QuicTransport::new(addr_a, id_a.pkcs8_der()).unwrap();
-        let transport_b =
-            quic_transport::QuicTransport::new(addr_b, id_b.pkcs8_der()).unwrap();
+        let transport_a = quic_transport::QuicTransport::new(addr_a, id_a.pkcs8_der()).unwrap();
+        let transport_b = quic_transport::QuicTransport::new(addr_b, id_b.pkcs8_der()).unwrap();
 
         // Get the actual bound addresses
         let _real_addr_a = transport_a.endpoint.local_addr().unwrap();
@@ -575,14 +618,9 @@ mod tests {
         let conn = transport_a.dial(real_addr_b).await.unwrap();
 
         // Outbound handshake from A -> B
-        let peer_id = quic_transport::outbound_handshake(
-            &conn,
-            &pool_a,
-            node_id_a,
-            &our_groups,
-        )
-        .await
-        .unwrap();
+        let peer_id = quic_transport::outbound_handshake(&conn, &pool_a, node_id_a, &our_groups)
+            .await
+            .unwrap();
 
         assert_eq!(peer_id, node_id_b, "handshake should return node B's ID");
 
@@ -639,25 +677,17 @@ mod tests {
         let b_handle = pool_b.get(&node_id_a).await.unwrap();
 
         // Sync: B asks A for headers in the test group
-        let sync_resp = mini_protocols::request_sync(
-            &b_handle.connection,
-            group_id,
-            None,
-            100,
-        )
-        .await
-        .unwrap();
+        let sync_resp = mini_protocols::request_sync(&b_handle.connection, group_id, None, 100)
+            .await
+            .unwrap();
 
         assert_eq!(sync_resp.items.len(), 1, "sync should return 1 header");
         assert_eq!(sync_resp.items[0].item_id, "item-001");
 
         // Fetch: B asks A for the full item
-        let fetched = mini_protocols::fetch_items(
-            &b_handle.connection,
-            vec!["item-001".into()],
-        )
-        .await
-        .unwrap();
+        let fetched = mini_protocols::fetch_items(&b_handle.connection, vec!["item-001".into()])
+            .await
+            .unwrap();
 
         assert_eq!(fetched.len(), 1, "fetch should return 1 item");
         assert_eq!(fetched[0].item_id, "item-001");
@@ -691,14 +721,12 @@ mod tests {
         let _ = shutdown_tx_b.send(());
         // Close connections
         conn.close(quinn::VarInt::from_u32(0), b"test done");
-        transport_a.endpoint.close(quinn::VarInt::from_u32(0), b"done");
+        transport_a
+            .endpoint
+            .close(quinn::VarInt::from_u32(0), b"done");
 
         // Wait for listen task to finish
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            listen_handle,
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), listen_handle).await;
     }
 
     /// End-to-end replication test: two full nodes (governor + replication + QUIC),
@@ -723,10 +751,20 @@ mod tests {
 
         // Create the group in both storages
         storage_a
-            .write_group(group_id, "Repl Test", r#"{"broadcast_eagerness":"chatty"}"#, "{}")
+            .write_group(
+                group_id,
+                "Repl Test",
+                r#"{"broadcast_eagerness":"chatty"}"#,
+                "{}",
+            )
             .unwrap();
         storage_b
-            .write_group(group_id, "Repl Test", r#"{"broadcast_eagerness":"chatty"}"#, "{}")
+            .write_group(
+                group_id,
+                "Repl Test",
+                r#"{"broadcast_eagerness":"chatty"}"#,
+                "{}",
+            )
             .unwrap();
 
         let groups_a = Arc::new(tokio::sync::RwLock::new(vec![group_id.to_string()]));
@@ -737,12 +775,10 @@ mod tests {
         // Build transports
         let addr_a: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let addr_b: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let transport_a = Arc::new(
-            quic_transport::QuicTransport::new(addr_a, id_a.pkcs8_der()).unwrap(),
-        );
-        let transport_b = Arc::new(
-            quic_transport::QuicTransport::new(addr_b, id_b.pkcs8_der()).unwrap(),
-        );
+        let transport_a =
+            Arc::new(quic_transport::QuicTransport::new(addr_a, id_a.pkcs8_der()).unwrap());
+        let transport_b =
+            Arc::new(quic_transport::QuicTransport::new(addr_b, id_b.pkcs8_der()).unwrap());
         let real_addr_b = transport_b.endpoint.local_addr().unwrap();
 
         // Pools
@@ -765,12 +801,14 @@ mod tests {
             warm_min: 0,
             ..Default::default()
         };
-        let _gov_a = Arc::new(tokio::sync::Mutex::new(
-            cordelia_governor::Governor::new(gov_targets.clone(), our_groups_a.clone()),
-        ));
-        let _gov_b = Arc::new(tokio::sync::Mutex::new(
-            cordelia_governor::Governor::new(gov_targets, our_groups_b.clone()),
-        ));
+        let _gov_a = Arc::new(tokio::sync::Mutex::new(cordelia_governor::Governor::new(
+            gov_targets.clone(),
+            our_groups_a.clone(),
+        )));
+        let _gov_b = Arc::new(tokio::sync::Mutex::new(cordelia_governor::Governor::new(
+            gov_targets,
+            our_groups_b.clone(),
+        )));
 
         // Replication engines
         let repl_a = ReplicationEngine::new(ReplicationConfig::default(), "node-a".into());
@@ -822,18 +860,15 @@ mod tests {
 
         // A dials B, handshakes
         let conn = transport_a.dial(real_addr_b).await.unwrap();
-        let peer_id = quic_transport::outbound_handshake(
-            &conn,
-            &pool_a,
-            node_id_a,
-            &our_groups_a,
-        )
-        .await
-        .unwrap();
+        let peer_id = quic_transport::outbound_handshake(&conn, &pool_a, node_id_a, &our_groups_a)
+            .await
+            .unwrap();
         assert_eq!(peer_id, node_id_b);
 
         // Mark peer as Hot in pool A (simulating governor promotion)
-        pool_a.set_state(&peer_id, cordelia_governor::PeerState::Hot).await;
+        pool_a
+            .set_state(&peer_id, cordelia_governor::PeerState::Hot)
+            .await;
 
         // Spawn A's connection handler so B can open push streams to A
         {
@@ -852,7 +887,9 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         // Also mark the peer as Hot in B's pool (B sees A as Hot)
-        pool_b.set_state(&node_id_a, cordelia_governor::PeerState::Hot).await;
+        pool_b
+            .set_state(&node_id_a, cordelia_governor::PeerState::Hot)
+            .await;
 
         // Write an item on node A
         let test_data = b"auto-replicated-blob".to_vec();
@@ -892,7 +929,10 @@ mod tests {
             }
         }
 
-        assert!(found, "item should have replicated from A to B automatically");
+        assert!(
+            found,
+            "item should have replicated from A to B automatically"
+        );
 
         // Shutdown
         let _ = shutdown_tx_a.send(());
@@ -921,22 +961,17 @@ mod tests {
         println!("resolved {target} -> {addr}");
 
         let id = NodeIdentity::generate().unwrap();
-        let transport = quic_transport::QuicTransport::new(
-            "0.0.0.0:0".parse().unwrap(),
-            id.pkcs8_der(),
-        )
-        .unwrap();
+        let transport =
+            quic_transport::QuicTransport::new("0.0.0.0:0".parse().unwrap(), id.pkcs8_der())
+                .unwrap();
 
         let pool = peer_pool::PeerPool::new(vec!["test-group".into()]);
 
         println!("dialling {addr}...");
-        let conn = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            transport.dial(addr),
-        )
-        .await
-        .expect("dial timed out after 5s")
-        .expect("dial failed");
+        let conn = tokio::time::timeout(std::time::Duration::from_secs(5), transport.dial(addr))
+            .await
+            .expect("dial timed out after 5s")
+            .expect("dial failed");
 
         println!("QUIC connected to {}", conn.remote_address());
 
@@ -953,13 +988,12 @@ mod tests {
         .expect("handshake timed out")
         .expect("handshake failed");
 
-        println!(
-            "HANDSHAKE OK - bootnode node_id: {}",
-            hex::encode(peer_id)
-        );
+        println!("HANDSHAKE OK - bootnode node_id: {}", hex::encode(peer_id));
 
         conn.close(quinn::VarInt::from_u32(0), b"test done");
-        transport.endpoint.close(quinn::VarInt::from_u32(0), b"done");
+        transport
+            .endpoint
+            .close(quinn::VarInt::from_u32(0), b"done");
     }
 
     /// Connect to live bootnode, create group, write item, verify sync.
@@ -977,21 +1011,16 @@ mod tests {
             .expect("no addresses returned");
 
         let id = NodeIdentity::generate().unwrap();
-        let transport = quic_transport::QuicTransport::new(
-            "0.0.0.0:0".parse().unwrap(),
-            id.pkcs8_der(),
-        )
-        .unwrap();
+        let transport =
+            quic_transport::QuicTransport::new("0.0.0.0:0".parse().unwrap(), id.pkcs8_der())
+                .unwrap();
 
         let pool = peer_pool::PeerPool::new(vec!["boot-test-group".into()]);
 
-        let conn = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            transport.dial(addr),
-        )
-        .await
-        .expect("dial timed out")
-        .expect("dial failed");
+        let conn = tokio::time::timeout(std::time::Duration::from_secs(5), transport.dial(addr))
+            .await
+            .expect("dial timed out")
+            .expect("dial failed");
 
         let peer_id = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -1009,18 +1038,15 @@ mod tests {
         println!("connected to bootnode: {}", hex::encode(peer_id));
 
         // Request sync for the group
-        let sync_resp = mini_protocols::request_sync(
-            &conn,
-            "boot-test-group",
-            None,
-            100,
-        )
-        .await
-        .expect("sync request failed");
+        let sync_resp = mini_protocols::request_sync(&conn, "boot-test-group", None, 100)
+            .await
+            .expect("sync request failed");
 
         println!("sync response: {} items", sync_resp.items.len());
 
         conn.close(quinn::VarInt::from_u32(0), b"test done");
-        transport.endpoint.close(quinn::VarInt::from_u32(0), b"done");
+        transport
+            .endpoint
+            .close(quinn::VarInt::from_u32(0), b"done");
     }
 }

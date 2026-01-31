@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "cordelia-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "base64",
@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "cordelia-crypto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "hex",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "cordelia-governor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cordelia-protocol",
  "proptest",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "cordelia-node"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "cordelia-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "bytes",
@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "cordelia-replication"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "cordelia-governor",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "cordelia-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "hex",

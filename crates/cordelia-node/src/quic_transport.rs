@@ -13,7 +13,6 @@ use std::sync::Arc;
 use cordelia_governor::Governor;
 use cordelia_protocol::tls;
 use tokio::sync::{broadcast, Mutex};
-use tracing;
 
 use crate::mini_protocols;
 use crate::peer_pool::PeerPool;
@@ -25,6 +24,7 @@ pub const PROTO_PEER_SHARE: u8 = 0x03;
 pub const PROTO_MEMORY_SYNC: u8 = 0x04;
 pub const PROTO_MEMORY_FETCH: u8 = 0x05;
 pub const PROTO_MEMORY_PUSH: u8 = 0x06;
+pub const PROTO_GROUP_EXCHANGE: u8 = 0x07;
 
 /// QUIC transport layer.
 pub struct QuicTransport {
@@ -83,7 +83,6 @@ impl QuicTransport {
                         Some(incoming) => {
                             let pool = pool.clone();
                             let storage = storage.clone();
-                            let our_node_id = our_node_id;
                             let our_groups = our_groups.clone();
                             let governor = governor.clone();
                             tokio::spawn(async move {
@@ -116,6 +115,7 @@ impl QuicTransport {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Run a single connection -- accept bidirectional streams and dispatch by protocol ID.
 /// `peer_node_id` is known for outbound connections; for inbound, pass [0u8; 32] and
 /// the handshake will resolve it. On exit, removes the peer from the pool.
@@ -183,9 +183,7 @@ pub async fn run_connection(
 
                     match proto_buf[0] {
                         PROTO_KEEPALIVE => {
-                            if let Err(e) =
-                                mini_protocols::handle_keepalive(send, recv).await
-                            {
+                            if let Err(e) = mini_protocols::handle_keepalive(send, recv).await {
                                 tracing::debug!("keepalive error: {e}");
                             }
                         }
@@ -211,10 +209,27 @@ pub async fn run_connection(
                             }
                         }
                         PROTO_MEMORY_PUSH => {
-                            if let Err(e) =
-                                mini_protocols::handle_memory_push(send, recv, &storage, &our_groups).await
+                            if let Err(e) = mini_protocols::handle_memory_push(
+                                send,
+                                recv,
+                                &storage,
+                                &our_groups,
+                            )
+                            .await
                             {
                                 tracing::debug!("memory-push error: {e}");
+                            }
+                        }
+                        PROTO_GROUP_EXCHANGE => {
+                            if let Err(e) = mini_protocols::handle_group_exchange(
+                                send,
+                                recv,
+                                &pool,
+                                &our_groups,
+                            )
+                            .await
+                            {
+                                tracing::debug!("group-exchange error: {e}");
                             }
                         }
                         _other => {

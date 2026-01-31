@@ -377,7 +377,7 @@ impl Governor {
                     // Skip peers still in reconnect backoff
                     let backoff = Self::reconnect_backoff(p.disconnect_count);
                     p.last_disconnected
-                        .map_or(true, |t| now.duration_since(t) >= backoff)
+                        .is_none_or(|t| now.duration_since(t) >= backoff)
                 }
             })
             .map(|p| (p.node_id, p.has_group_overlap(&self.our_groups)))
@@ -399,7 +399,7 @@ impl Governor {
                     matches!(p.state, PeerState::Cold) && {
                         let backoff = Self::reconnect_backoff(p.disconnect_count);
                         p.last_disconnected
-                            .map_or(true, |t| now.duration_since(t) >= backoff)
+                            .is_none_or(|t| now.duration_since(t) >= backoff)
                     }
                 })
                 .take(needed)
@@ -430,8 +430,7 @@ impl Governor {
                 .values()
                 .filter(|p| {
                     p.state == PeerState::Warm
-                        && p.demoted_at
-                            .map_or(true, |d| d.elapsed() > DEAD_TIMEOUT)
+                        && p.demoted_at.is_none_or(|d| d.elapsed() > DEAD_TIMEOUT)
                 })
                 .max_by(|a, b| {
                     a.score()
@@ -459,8 +458,7 @@ impl Governor {
             .values()
             .filter(|p| {
                 p.state == PeerState::Warm
-                    && p.demoted_at
-                        .map_or(true, |d| d.elapsed() > DEAD_TIMEOUT)
+                    && p.demoted_at.is_none_or(|d| d.elapsed() > DEAD_TIMEOUT)
             })
             .map(|p| (p.node_id, p.score()))
             .collect();
@@ -504,17 +502,13 @@ impl Governor {
         for (id, _, _) in hot_peers.into_iter().take(excess) {
             if let Some(peer) = self.peers.get_mut(&id) {
                 peer.state = PeerState::Warm;
-                actions
-                    .transitions
-                    .push((id, "hot".into(), "warm".into()));
+                actions.transitions.push((id, "hot".into(), "warm".into()));
             }
         }
     }
 
     fn churn(&mut self, actions: &mut GovernorActions) {
-        if self.last_churn.elapsed()
-            < Duration::from_secs(self.targets.churn_interval_secs)
-        {
+        if self.last_churn.elapsed() < Duration::from_secs(self.targets.churn_interval_secs) {
             return;
         }
         self.last_churn = Instant::now();
@@ -704,7 +698,10 @@ mod tests {
         assert!(replaced);
         assert!(gov.peer_info(&old_id).is_none());
         assert!(gov.peer_info(&new_id).is_some());
-        assert_eq!(gov.peer_info(&new_id).unwrap().groups, vec!["g1".to_string()]);
+        assert_eq!(
+            gov.peer_info(&new_id).unwrap().groups,
+            vec!["g1".to_string()]
+        );
     }
 
     #[test]
@@ -826,7 +823,10 @@ mod tests {
         let _actions = gov.tick();
         let peer = gov.peer_info(&id).unwrap();
         assert_eq!(peer.state, PeerState::Hot);
-        assert_eq!(peer.disconnect_count, 0, "hot promotion should reset backoff");
+        assert_eq!(
+            peer.disconnect_count, 0,
+            "hot promotion should reset backoff"
+        );
     }
 
     #[test]
@@ -856,7 +856,11 @@ mod tests {
 
         // Peer 0 should have been demoted Hot -> Warm
         let peer0 = gov.peer_info(&make_node_id(0)).unwrap();
-        assert_eq!(peer0.state, PeerState::Warm, "peer 0 should be demoted to Warm");
+        assert_eq!(
+            peer0.state,
+            PeerState::Warm,
+            "peer 0 should be demoted to Warm"
+        );
         assert!(peer0.demoted_at.is_some(), "demoted_at should be set");
 
         // Despite hot_min=2 and only 1 hot, peer 0 should NOT have been re-promoted
@@ -871,7 +875,10 @@ mod tests {
             .transitions
             .iter()
             .any(|(id, _, to)| *id == make_node_id(0) && to == "hot");
-        assert!(!peer0_promoted, "recently demoted peer must not be re-promoted");
+        assert!(
+            !peer0_promoted,
+            "recently demoted peer must not be re-promoted"
+        );
     }
 
     #[test]
@@ -894,6 +901,10 @@ mod tests {
         // Peer is Warm with expired cooldown -- should be eligible for promotion
         let _actions = gov.tick();
         let peer = gov.peer_info(&id).unwrap();
-        assert_eq!(peer.state, PeerState::Hot, "peer should be promoted after cooldown expires");
+        assert_eq!(
+            peer.state,
+            PeerState::Hot,
+            "peer should be promoted after cooldown expires"
+        );
     }
 }

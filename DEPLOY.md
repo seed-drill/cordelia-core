@@ -95,7 +95,7 @@ Wants=network-online.target
 Type=simple
 User=cordelia
 Group=cordelia
-ExecStart=/home/cordelia/cordelia/cordelia-node/target/release/cordelia-node --config /home/cordelia/.cordelia/config.toml
+ExecStart=/usr/local/bin/cordelia-node --config /home/cordelia/.cordelia/config.toml
 WorkingDirectory=/home/cordelia
 Restart=on-failure
 RestartSec=5
@@ -206,11 +206,33 @@ cordelia-node --config ~/.cordelia/config.toml query test-martin-001
 
 ## Updating
 
+### Bare metal nodes (boot1, boot2)
+
+Use the upgrade script to download the latest release binary:
+
 ```bash
-cd ~/cordelia
+# Upgrade to latest release
+./scripts/upgrade.sh
+
+# Or specify a version
+./scripts/upgrade.sh v0.1.1
+```
+
+The script downloads the binary from GitHub Releases, verifies the SHA-256 checksum, stops the service, replaces the binary at `/usr/local/bin/cordelia-node`, restarts the service, and runs a health check.
+
+### Fly.io (boot3)
+
+```bash
+flyctl deploy
+```
+
+### Manual build (development)
+
+```bash
+cd ~/cordelia-core
 git pull
-cd cordelia-node
 cargo build --release
+sudo cp target/release/cordelia-node /usr/local/bin/cordelia-node
 sudo systemctl restart cordelia-node
 ```
 
@@ -308,10 +330,11 @@ DEBUG governor tick complete warm=0 hot=1
 | Node | Host | DNS | Status |
 |------|------|-----|--------|
 | boot1 | vducdl50 (KVM on pdukvm15) | boot1.cordelia.seeddrill.io:9474 | Running |
+| boot2 | vducdl51 (KVM on pdukvm15) | boot2.cordelia.seeddrill.io:9474 | Running |
+| boot3 | Fly.io (cdg) | boot3.cordelia.seeddrill.io:9474 | Running |
 | russell-local | MacBook (GSV-Heavy-Lifting) | localhost:9474 | Running (dev) |
-| boot2 | TBD (Martin) | boot2.cordelia.seeddrill.io:9474 | Planned |
 | bill-local | MacBook (Bill) | localhost:9474 | Planned (after 1 week soak) |
 
 ---
 
-*Last updated: 2026-01-29*
+*Last updated: 2026-01-31*

@@ -17,6 +17,9 @@ pub struct PeerHandle {
     pub state: PeerState,
     pub groups: Vec<GroupId>,
     pub group_intersection: Vec<GroupId>,
+    /// Negotiated protocol version from handshake.
+    #[allow(dead_code)]
+    pub protocol_version: u16,
 }
 
 /// Thread-safe pool of active peer connections.
@@ -41,6 +44,7 @@ impl PeerPool {
         connection: quinn::Connection,
         peer_groups: Vec<GroupId>,
         state: PeerState,
+        protocol_version: u16,
     ) {
         let group_intersection: Vec<GroupId> = peer_groups
             .iter()
@@ -54,6 +58,7 @@ impl PeerPool {
             state,
             groups: peer_groups,
             group_intersection,
+            protocol_version,
         };
 
         self.inner.write().await.insert(node_id, handle);
@@ -75,7 +80,9 @@ impl PeerPool {
             .read()
             .await
             .values()
-            .filter(|h| h.state == PeerState::Hot && h.group_intersection.contains(&group_id.to_string()))
+            .filter(|h| {
+                h.state == PeerState::Hot && h.group_intersection.contains(&group_id.to_string())
+            })
             .cloned()
             .collect()
     }
@@ -99,6 +106,7 @@ impl PeerPool {
         (warm, hot)
     }
 
+    #[allow(dead_code)]
     /// Total connected peer count.
     pub async fn len(&self) -> usize {
         self.inner.read().await.len()
@@ -116,6 +124,7 @@ impl PeerPool {
         }
     }
 
+    #[allow(dead_code)]
     /// Update peer state.
     pub async fn set_state(&self, node_id: &NodeId, state: PeerState) {
         if let Some(handle) = self.inner.write().await.get_mut(node_id) {

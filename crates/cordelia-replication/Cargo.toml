@@ -1,6 +1,6 @@
 [package]
 name = "cordelia-replication"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Culture-aware replication engine for Cordelia P2P"
 

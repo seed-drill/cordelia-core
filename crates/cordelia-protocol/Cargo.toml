@@ -1,6 +1,6 @@
 [package]
 name = "cordelia-protocol"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Wire protocol and message types for Cordelia P2P"
 

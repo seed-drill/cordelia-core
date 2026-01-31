@@ -26,7 +26,11 @@ pub struct WriteNotification {
 }
 
 /// Callback to get peer counts (warm, hot) from the node's peer pool.
-pub type PeerCountFn = Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = (usize, usize)> + Send>> + Send + Sync>;
+pub type PeerCountFn = Box<
+    dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = (usize, usize)> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Shared state for all API handlers.
 pub struct AppState {
@@ -254,8 +258,7 @@ async fn l1_read(
                 Ok(val) => Json(val).into_response(),
                 Err(_) => {
                     // Return as base64 if not valid JSON
-                    let encoded = base64::engine::general_purpose::STANDARD
-                        .encode(&data);
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
                     Json(serde_json::json!({ "data": encoded })).into_response()
                 }
             }
@@ -386,7 +389,11 @@ async fn l2_search(
     }
 
     // Fetch more results if group_id filter is active (post-filter needs headroom)
-    let fetch_limit = if req.group_id.is_some() { req.limit * 4 } else { req.limit };
+    let fetch_limit = if req.group_id.is_some() {
+        req.limit * 4
+    } else {
+        req.limit
+    };
 
     match state.storage.fts_search(&req.query, fetch_limit) {
         Ok(ids) => {
@@ -394,7 +401,9 @@ async fn l2_search(
                 // Post-filter: only return items belonging to the requested group
                 ids.into_iter()
                     .filter(|id| {
-                        state.storage.read_l2_item_meta(id)
+                        state
+                            .storage
+                            .read_l2_item_meta(id)
                             .ok()
                             .flatten()
                             .map(|m| m.group_id.as_deref() == Some(group_id))
@@ -442,10 +451,7 @@ async fn groups_create(
     }
 }
 
-async fn groups_list(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn groups_list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     if let Err(e) = check_auth(&state, &headers) {
         return e.into_response();
     }
@@ -546,10 +552,19 @@ async fn groups_add_member(
     // Validate role
     match req.role.as_str() {
         "owner" | "admin" | "member" | "viewer" => {}
-        _ => return (StatusCode::BAD_REQUEST, "invalid role: must be owner, admin, member, or viewer").into_response(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "invalid role: must be owner, admin, member, or viewer",
+            )
+                .into_response()
+        }
     }
 
-    match state.storage.add_member(&req.group_id, &req.entity_id, &req.role) {
+    match state
+        .storage
+        .add_member(&req.group_id, &req.entity_id, &req.role)
+    {
         Ok(()) => {
             let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
                 entity_id: state.entity_id.clone(),
@@ -605,10 +620,19 @@ async fn groups_update_posture(
     // Validate posture
     match req.posture.as_str() {
         "active" | "silent" | "emcon" => {}
-        _ => return (StatusCode::BAD_REQUEST, "invalid posture: must be active, silent, or emcon").into_response(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "invalid posture: must be active, silent, or emcon",
+            )
+                .into_response()
+        }
     }
 
-    match state.storage.update_member_posture(&req.group_id, &req.entity_id, &req.posture) {
+    match state
+        .storage
+        .update_member_posture(&req.group_id, &req.entity_id, &req.posture)
+    {
         Ok(true) => {
             let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
                 entity_id: state.entity_id.clone(),
@@ -626,10 +650,7 @@ async fn groups_update_posture(
     }
 }
 
-async fn status(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     if let Err(e) = check_auth(&state, &headers) {
         return e.into_response();
     }
@@ -657,10 +678,7 @@ async fn status(
     .into_response()
 }
 
-async fn peers(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn peers(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     if let Err(e) = check_auth(&state, &headers) {
         return e.into_response();
     }

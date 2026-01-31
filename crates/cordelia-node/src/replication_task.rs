@@ -167,11 +167,9 @@ async fn send_push(
     conn: &quinn::Connection,
     items: Vec<FetchedItem>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (mut send, mut recv) = crate::quic_transport::open_protocol_stream(
-        conn,
-        crate::quic_transport::PROTO_MEMORY_PUSH,
-    )
-    .await?;
+    let (mut send, mut recv) =
+        crate::quic_transport::open_protocol_stream(conn, crate::quic_transport::PROTO_MEMORY_PUSH)
+            .await?;
 
     let msg = cordelia_protocol::messages::Message::FetchResponse(
         cordelia_protocol::messages::FetchResponse { items },
@@ -183,23 +181,22 @@ async fn send_push(
     send.finish()?;
 
     // Read ack (best-effort, don't fail on timeout)
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        async {
-            let mut len_buf = [0u8; 4];
-            if recv.read_exact(&mut len_buf).await.is_ok() {
-                let len = u32::from_be_bytes(len_buf) as usize;
-                if len <= 16 * 1024 * 1024 {
-                    let mut buf = vec![0u8; len];
-                    let _ = recv.read_exact(&mut buf).await;
-                }
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut len_buf = [0u8; 4];
+        if recv.read_exact(&mut len_buf).await.is_ok() {
+            let len = u32::from_be_bytes(len_buf) as usize;
+            if len <= 16 * 1024 * 1024 {
+                let mut buf = vec![0u8; len];
+                let _ = recv.read_exact(&mut buf).await;
             }
         }
-    ).await;
+    })
+    .await;
 
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Send a SyncResponse with a single header (for notify-and-fetch).
 /// Uses MEMORY_PUSH (0x06) to distinguish from request-response sync streams.
 async fn send_sync_notification(
@@ -211,11 +208,9 @@ async fn send_sync_notification(
     // so the receiver can store it directly. The header-only notification
     // pattern is handled via anti-entropy sync instead.
     // This keeps the push path simple: always full items.
-    let (mut send, _recv) = crate::quic_transport::open_protocol_stream(
-        conn,
-        crate::quic_transport::PROTO_MEMORY_SYNC,
-    )
-    .await?;
+    let (mut send, _recv) =
+        crate::quic_transport::open_protocol_stream(conn, crate::quic_transport::PROTO_MEMORY_SYNC)
+            .await?;
 
     let msg = cordelia_protocol::messages::Message::SyncResponse(
         cordelia_protocol::messages::SyncResponse {
@@ -282,11 +277,7 @@ async fn run_anti_entropy(
 
     // Fetch in batches
     for chunk in needed_ids.chunks(engine.max_batch_size() as usize) {
-        let items = mini_protocols::fetch_items(
-            &peer.connection,
-            chunk.to_vec(),
-        )
-        .await?;
+        let items = mini_protocols::fetch_items(&peer.connection, chunk.to_vec()).await?;
 
         for item in &items {
             let outcome = engine.on_receive(storage.as_ref(), item, our_groups);
@@ -302,10 +293,7 @@ async fn run_anti_entropy(
 }
 
 /// Load group culture from storage, returning default if not found or unparseable.
-fn load_group_culture(
-    storage: &Arc<dyn Storage>,
-    group_id: &str,
-) -> Option<GroupCulture> {
+fn load_group_culture(storage: &Arc<dyn Storage>, group_id: &str) -> Option<GroupCulture> {
     let group = storage.read_group(group_id).ok()??;
     // Try JSON parse first, fall back to treating raw string as eagerness level
     serde_json::from_str(&group.culture).ok().or_else(|| {
