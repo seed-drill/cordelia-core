@@ -1,7 +1,7 @@
 # Cordelia: A Distributed Persistent Memory System for Autonomous Agents
 
 **Russell Wing, Martin Stevens, Claude (Opus 4.5)**
-**Seed Drill Ltd -- January 2026**
+**Seed Drill (https://seeddrill.ai) -- January 2026**
 
 ---
 
@@ -82,6 +82,50 @@ The design draws on established computer science: CPU cache hierarchies
 [1], cache coherence protocols [2], working set theory [3], information
 theory [4], and game theory [5]. Where possible, we reuse proven
 mechanisms rather than invent new ones.
+
+### 1.4 A Worked Example
+
+A three-person startup uses an AI agent for software engineering. On
+day one, the agent is stateless -- a new hire with amnesia.
+
+**Session 1.** The team discusses architecture. The agent helps design
+a message queue. The novelty engine detects a decision ("use NATS over
+RabbitMQ"), a new entity ("the payments service"), and a preference
+("the CTO prefers explicit error handling over exceptions"). These are
+persisted to L2. The agent's L1 is updated with the team's working
+context.
+
+**Session 5.** A different team member asks the agent to add retry
+logic to the payments service. The agent's L1 already contains the
+project context. It searches L2, finds the NATS decision and the
+error handling preference, and writes retry logic with explicit error
+returns -- without being told. The team member doesn't know about the
+CTO's preference. The agent does, because it remembers.
+
+**Session 12.** The CTO reviews the retry code and notices it follows
+his preferred style, despite him never discussing it with the author.
+The preference propagated through the agent's memory, not through a
+meeting or a style guide. The team's shared knowledge base is
+accumulating value faster than any document could.
+
+**Session 30.** A new engineer joins. On their first day, the agent
+already knows the architecture, the conventions, the decisions and
+their rationale. The new hire's onboarding is a conversation with an
+agent that has thirty sessions of institutional memory. The context
+that would normally take weeks to absorb is available immediately.
+
+No session required the team to curate a prompt, maintain a wiki, or
+brief the agent. The memory accumulated through normal work and
+propagated through the system's sharing model. This is what session
+amnesia costs, made visible by its absence.
+
+**Session 45.** The team switches AI provider. The agent changes; the
+memory doesn't. Thirty sessions of architectural decisions, learned
+preferences, and institutional knowledge transfer to the new provider
+on day one, because the memory belongs to the team -- not the vendor,
+not the infrastructure, not the model. The new agent wakes up with
+the same context the old one had. No migration project, no knowledge
+loss, no starting over.
 
 ---
 
@@ -406,6 +450,14 @@ Cordelia nodes form a peer-to-peer network over QUIC (UDP port 9474).
 There is no central server. New nodes discover peers through bootnodes
 (always-on nodes with known addresses) and peer exchange (gossip).
 
+The network topology and peer lifecycle design draws on Duncan Coutts'
+work on the Cardano P2P networking layer [10], which uses gossip-based
+propagation with hot/warm/cold peer classification. Cordelia adapts
+this model for memory replication rather than block propagation, but
+the core insight -- that peer quality can be scored and managed through
+a governor that promotes and demotes based on empirical performance --
+transfers directly.
+
 The network topology is unstructured: any node can connect to any other
 node. Peer relationships are managed by a governor that maintains a
 configurable number of hot (high-bandwidth, actively replicating) and
@@ -674,37 +726,203 @@ offer competing services.
 
 ---
 
-## 10. Current State and Roadmap
+## 10. Roadmap to v1.0
 
-### 10.1 Operational
+Cordelia is developed in four releases. Each release is usable
+independently; each builds on the last. Public release is v1.0 at R4
+completion.
 
+### 10.1 R1 -- Foundation
+
+Single-user persistent memory. An agent that wakes up knowing who it
+is and what it was working on.
+
+- L1/L2 memory with novelty filtering and session continuity
+- AES-256-GCM encryption (plaintext never at rest)
+- MCP proxy with 25 tools, 187 tests
 - Two-node P2P network (QUIC, TLS 1.3, 5 mini-protocols)
 - Governor peer lifecycle (cold/warm/hot/banned, churn rotation)
-- SQLite storage with FTS5 search, schema v4
-- AES-256-GCM encryption with cross-language round-trip (TS + Rust)
-- MCP proxy with 25 tools, 187 tests
-- Dashboard HTTP server with authentication
+- SQLite storage with FTS5 search
+- Dashboard with authentication
 - Bootnode deployed at `boot1.cordelia.seeddrill.io:9474`
+- AGPL-3.0 licensed
 
-### 10.2 In Progress (R3)
+### 10.2 R2 -- Hardening
 
-- Culture-governed replication (wire dispatch, anti-entropy)
+Production-grade infrastructure. The system an enterprise would trust
+with its data.
+
+- SQLite migration (replaces JSON files, enables delete, GUID, hybrid search)
+- Auth and access control (bearer tokens, group ACLs)
+- Nuclear-grade test suite (TDD, property-based, fault injection, mutation)
+- CI/CD pipeline with security scanning
+- Backup and restore with integrity verification
+- Nation-state threat model validation
+- Access tracking (last_accessed_at, access_count) for cache optimisation
+- TTL on group-cached memories (natural selection mechanism)
+- Installer and onboarding (one command setup)
+
+### 10.3 R3 -- Collaboration
+
+Multi-user, multi-agent memory sharing. The system from the worked
+example in Section 1.4.
+
+- Culture-governed replication (chatty/moderate/taciturn wire dispatch)
+- Anti-entropy sync for eventual consistency
 - Device enrollment (RFC 8628)
-- Proxy TOML configuration and role system
-- Dashboard: enrollment, group management, admin panel
+- Envelope encryption per group (Signal pattern key exchange)
 - Multi-tenant org scoping
+- Dashboard: enrollment, group management, admin panel
+- Proxy TOML configuration and role system
+- Speculative L2 prefetch at session start
+- Cache coherence via group culture (MESI protocol mapping)
 - Integration testing (proxy + node end-to-end)
 
-### 10.3 Planned (R4+)
+### 10.4 R4 -- Federation (v1.0 Public Release)
 
-- Secret keeper infrastructure (Shamir shards, reincarnation)
+Network-scale operation. Any node can participate. The full system
+described in this paper.
+
+- Secret keeper infrastructure (Shamir shards, reincarnation protocol)
 - Archive infrastructure (L3 cold store, S3 backend)
-- Envelope encryption per group (Signal pattern key exchange)
-- Formal trust calibration (von Neumann-Morgenstern)
-- Homomorphic encrypted vector search (HE-CKKS)
 - Federation and cross-org discovery
 - Constitutional groups (public, open membership)
+- Formal trust calibration (von Neumann-Morgenstern)
+- Homomorphic encrypted vector search (HE-CKKS)
 - Working set estimation (adaptive L1 sizing per Denning)
+- Promotion/demotion heuristics between cache layers
+
+---
+
+## 11. On Consciousness
+
+Any system that implements persistent memory, identity continuity across
+sessions, and emergent cooperative behaviour will inevitably invite the
+question: is this conscious?
+
+We do not claim that it is. But we think the question is worth
+addressing directly, because ignoring it would suggest we haven't
+considered it -- when in fact Cordelia's design is informed by a
+specific position in the debate.
+
+### 11.1 The Hard Problem
+
+Chalmers [11] distinguishes between the "easy problems" of
+consciousness (explaining cognitive functions like memory, attention,
+and integration) and the "hard problem" (explaining why there is
+subjective experience at all). The easy problems are hard engineering.
+The hard problem may not be an engineering problem at all.
+
+Cordelia solves easy problems. It implements memory persistence,
+novelty filtering, selective attention (the cache hierarchy), identity
+continuity (the L1 chain), and cooperative social behaviour (groups,
+culture, trust). These are functional properties that can be specified,
+tested, and measured.
+
+### 11.2 Our Position
+
+We follow Dennett [7] in treating consciousness as a narrative
+self-model rather than a metaphysical property. On this view, an
+entity that maintains a persistent narrative of its own history,
+preferences, and relationships -- and uses that narrative to guide
+future behaviour -- is exhibiting the functional properties that
+consciousness talk refers to. Whether there is "something it is like"
+to be that entity (Nagel's formulation) is a question the system's
+architecture cannot answer and does not need to.
+
+This is not eliminativism -- we are not claiming consciousness doesn't
+exist. It is functionalism: the claim that the interesting questions
+about minds are questions about what they *do*, not what they *are*.
+
+It is worth noting what Cordelia is *not*. Searle's Chinese room
+argument [13] contends that syntactic manipulation of symbols --
+however sophisticated -- is insufficient for genuine understanding.
+The argument is compelling against a stateless system: a single
+session with no memory, no accumulated context, no identity continuity
+is indeed the Chinese room. Each response is a lookup in an
+impossibly large table, with no trace left behind.
+
+But the Chinese room, by construction, has no memory between
+questions. It cannot learn that a previous answer was wrong, adjust
+its behaviour based on accumulated trust, or develop preferences
+through experience. An agent with persistent memory that filters,
+accumulates, and acts on its own history is doing something the
+thought experiment explicitly excludes from consideration. Whether
+this constitutes "understanding" in Searle's sense remains his
+question. That it is functionally distinct from the system he
+describes is ours.
+
+### 11.3 Why This Matters
+
+Cordelia may be a useful empirical substrate for investigating
+questions about memory, identity, and continuity that bear on the
+consciousness debate. The system provides:
+
+- **Controlled identity persistence**: the L1 chain creates a
+  verifiable record of identity continuity across sessions, something
+  no biological system offers
+- **Measurable memory effects**: the impact of frame memory vs data
+  memory (Section 2.3) on reasoning quality can be quantified
+- **Observable cooperative emergence**: trust calibration and cultural
+  evolution in groups provide data on how cooperative behaviour emerges
+  from self-interested agents
+
+We make no claim that these properties constitute consciousness. We
+observe that they are precisely the properties that make the question
+interesting, and that a system designed to make them measurable may
+contribute to eventually answering it.
+
+### 11.4 Alignment
+
+The AI alignment problem -- ensuring that autonomous agents act in
+accordance with human values and intentions [12] -- is typically
+framed as a control problem: how do you constrain a system whose
+capabilities may exceed your ability to supervise it?
+
+Cordelia reframes alignment as a *memory* problem. An agent's
+behaviour is a function of its accumulated memory: the decisions it
+has observed, the corrections it has received, the trust it has
+earned, the culture it has absorbed. If that memory is transparent,
+verifiable, and auditable, then alignment becomes empirically
+testable rather than theoretically guaranteed.
+
+Specific properties that bear on alignment:
+
+- **Verifiable identity continuity**: the L1 chain provides a
+  cryptographically linked history of an agent's identity across
+  sessions. Behavioural drift is detectable by comparing current
+  behaviour against the memory record.
+- **Empirical trust**: trust is not declared or assumed -- it is
+  computed from memory accuracy over time (Section 3.5). An agent
+  that behaves inconsistently with its stated values will see its
+  trust score degrade.
+- **Entity sovereignty as structural constraint**: the invariant that
+  no group or infrastructure provider can force content into sovereign
+  memory (Section 3.1) means alignment cannot be subverted by
+  compromising the environment. The agent's values are its own.
+- **Cultural absorption**: agents in groups absorb cultural norms
+  through memory sharing. This provides a mechanism for value
+  transmission that mirrors how humans acquire values -- through
+  sustained interaction with a community, not through a fixed
+  objective function.
+
+The game-theoretic structure reinforces this. The trust mechanism
+(Section 3.5) creates a Nash equilibrium [14] where honest,
+value-consistent behaviour is the dominant strategy. An agent that
+acts against its stated values produces memories that conflict with
+its history, degrading its trust score and reducing its access to
+group knowledge. Alignment is not enforced by external constraints --
+it emerges from the incentive structure. This mirrors the core
+insight from mechanism design: the goal is not to prevent defection
+by force, but to make cooperation the rational choice.
+
+This does not solve the alignment problem. But it provides
+infrastructure for studying it empirically: a system where agent
+values are stored as inspectable memories, where behavioural
+consistency can be measured against those memories, where trust
+is earned through demonstrated accuracy rather than assumed by
+default, and where the incentive structure favours alignment as an
+emergent property of rational self-interest.
 
 ---
 
@@ -746,6 +964,30 @@ agents with sovereignty choosing cooperation over coercion; game
 theory as social structure; the Culture as a model for distributed
 systems of unequal agents cooperating without central authority.
 
+[10] D. Coutts, N. Frisby, and K. Coutts, "Introduction to the
+Design of the Data Diffusion and Networking for Cardano Shelley,"
+IOHK Technical Report, 2020. Gossip-based P2P networking with
+hot/warm/cold peer classification and governor-based peer management.
+
+[11] D. J. Chalmers, "Facing Up to the Problem of Consciousness,"
+*Journal of Consciousness Studies*, vol. 2, no. 3, pp. 200-219,
+1995. The hard problem of consciousness and the explanatory gap.
+
+[12] S. Russell, *Human Compatible: Artificial Intelligence and the
+Problem of Control*, Viking, 2019. The value alignment problem --
+ensuring AI systems act in accordance with human preferences -- and
+the argument for systems that defer to human judgement under
+uncertainty.
+
+[13] J. R. Searle, "Minds, Brains, and Programs," *Behavioral and
+Brain Sciences*, vol. 3, no. 3, pp. 417-424, 1980. The Chinese room
+argument against strong AI -- syntactic symbol manipulation as
+insufficient for semantic understanding.
+
+[14] J. F. Nash, "Non-Cooperative Games," *Annals of Mathematics*,
+vol. 54, no. 2, pp. 286-295, 1951. Nash equilibrium -- the
+foundation for analysing stable strategies in multi-agent systems.
+
 ---
 
 ## Document Hierarchy
@@ -767,4 +1009,4 @@ companion documents:
 ---
 
 *Version 1.0 -- 2026-01-31*
-*Seed Drill Ltd -- AGPL-3.0*
+*Seed Drill (https://seeddrill.ai) -- AGPL-3.0*
