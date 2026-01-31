@@ -6,25 +6,32 @@
 
 ## 1. System Overview
 
-Cordelia is a distributed persistent memory system. Three layers:
+Cordelia is a distributed persistent memory system. Four components:
 
 ```
-    AGENTS                     NODE                      NETWORK
-    ------                     ----                      -------
+    AGENTS                     PROXY                    NODE                      NETWORK
+    ------                     -----                    ----                      -------
 
-    Claude Code ─┐
-    Swarm Agent ─┤─ stdio ─> @cordelia/proxy ─ HTTP ─> cordelia-node ─ QUIC ─> peers
-    Other MCP   ─┘            (TypeScript)              (Rust)
-                              Port: n/a (stdio)         API: 9473
-                                                        P2P: 9474
+    Claude Code ─┐                                     cordelia-node (Rust)
+    Swarm Agent ─┤─ stdio ─> @cordelia/proxy (TS)      │
+    Other MCP   ─┘            │                        ├─ HTTP API :9473
+                              ├─ MCP stdio (agents)    ├─ QUIC P2P :9474
+    Browser ─────── HTTP ───> ├─ HTTP :3847 (dashboard)├─ SQLite storage
+                              ├─ HTTP client ──────────┘
+                              └─ Encryption boundary
 ```
 
-**@cordelia/proxy** (R3-021): Thin MCP proxy. Speaks stdio to agents, HTTP to local
-Rust node. Has L0 in-memory cache. Receives peer notifications, translates to cache
-invalidations. Agents see standard MCP tools; P2P is invisible. ~300 lines.
+**@cordelia/proxy** (TypeScript): MCP proxy + dashboard HTTP server. Three
+interfaces: (1) MCP stdio to agents, (2) HTTP server for dashboard/enrollment/admin,
+(3) HTTP client to local Rust node. Holds encryption keys. Role-configurable via TOML.
 
 **cordelia-node** (Rust): The node. Stores everything in SQLite. Replicates to peers
 via QUIC. Manages peer lifecycle (governor). Exposes HTTP API for local clients.
+Never holds plaintext.
+
+**Repos**:
+- `cordelia-core` (Rust) -- node, protocol, storage, crypto, all 7 crates
+- `cordelia-proxy` (TypeScript) -- proxy, dashboard, hooks, skills, scripts
 
 ---
 
@@ -35,16 +42,31 @@ via QUIC. Manages peer lifecycle (governor). Exposes HTTP API for local clients.
     │                      @cordelia/proxy (TS)                       │
     │                                                                 │
     │  ┌───────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐  │
-    │  │ MCP       │  │ Novelty    │  │ L0 Cache │  │ Node       │  │
-    │  │ Handler   │  │ Engine     │  │ (in-mem) │  │ Client     │  │
-    │  │           │  │           │  │          │  │ (HTTP)     │  │
-    │  │ 25 tools  │  │ Pattern   │  │ L1 hot   │  │            │  │
-    │  │ stdio     │  │ matching  │  │ context  │  │ Bearer     │  │
-    │  │ transport │  │ Scoring   │  │ Recent   │  │ token      │  │
-    │  │           │  │           │  │ L2 hits  │  │ Retry      │  │
+    │  │ MCP       │  │ Dashboard  │  │ L0 Cache │  │ Node       │  │
+    │  │ Handler   │  │ HTTP       │  │ (in-mem) │  │ Client     │  │
+    │  │           │  │ Server     │  │          │  │ (HTTP)     │  │
+    │  │ 25 tools  │  │           │  │ L1 hot   │  │            │  │
+    │  │ stdio     │  │ Dashboard  │  │ context  │  │ Bearer     │  │
+    │  │ transport │  │ Enrollment │  │ Recent   │  │ token      │  │
+    │  │           │  │ Admin API  │  │ L2 hits  │  │ Retry      │  │
     │  └─────┬─────┘  └─────┬─────┘  └────┬─────┘  └─────┬──────┘  │
     │        │              │             │              │           │
-    │        └──────────────┴─────────────┴──────────────┘           │
+    │  ┌─────┴──────────────┴─────────────┴──────────────┘           │
+    │  │                                                              │
+    │  │  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
+    │  │  │ Encryption │  │ Novelty    │  │ Schema     │            │
+    │  │  │ Boundary   │  │ Engine     │  │ Validation │            │
+    │  │  │ AES-256-GCM│  │ Pattern    │  │ Zod types  │            │
+    │  │  │ scrypt KDF │  │ matching   │  │            │            │
+    │  │  └────────────┘  └────────────┘  └────────────┘            │
+    │  │                                                              │
+    │  │  Role Config (from TOML):                                    │
+    │  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐   │
+    │  │  │personal│ │boot    │ │relay   │ │keeper  │ │archive │   │
+    │  │  │(default│ │node    │ │        │ │        │ │        │   │
+    │  │  │minimal)│ │+status │ │+relay  │ │+shards │ │+L3 API │   │
+    │  │  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘   │
+    │  └──────────────────────────────────────────────────────────┘  │
     │                          │                                     │
     └──────────────────────────┼─────────────────────────────────────┘
                                │ HTTP (localhost:9473)
@@ -59,6 +81,7 @@ via QUIC. Manages peer lifecycle (governor). Exposes HTTP API for local clients.
     │  │  POST /api/v1/l1/{read,write}                           │  │
     │  │  POST /api/v1/l2/{read,write,delete,search}             │  │
     │  │  POST /api/v1/groups/{create,list,read,items}           │  │
+    │  │  POST /api/v1/device/{begin,poll,register}              │  │
     │  │  POST /api/v1/status                                    │  │
     │  │  POST /api/v1/peers                                     │  │
     │  │                                                          │  │
@@ -176,17 +199,47 @@ POST /api/v1/groups/items
   Response: { "items": [ItemHeader], "has_more": bool }
 ```
 
+#### Device Enrollment
+
+```
+POST /api/v1/device/begin
+  Request:  { "client_id": "cordelia-proxy" }
+  Response: { "device_code": "ABCD-EFGH",
+              "verification_uri": "https://dash.cordelia.seeddrill.io/enroll",
+              "expires_in": 600,
+              "interval": 5 }
+
+POST /api/v1/device/poll
+  Request:  { "device_code": "ABCD-EFGH" }
+  Response (pending):  { "status": "pending" }
+  Response (complete): { "status": "complete",
+                         "bearer_token": "ck_<64hex>",
+                         "entity_id": "russell",
+                         "node_url": "http://127.0.0.1:9473" }
+  Response (expired):  { "status": "expired" }
+
+POST /api/v1/device/register
+  Request:  { "github_token": "<oauth_token>", "device_code": "ABCD-EFGH" }
+  Response: { "ok": true, "entity_id": "russell" }
+  Note: Called by dashboard after GitHub OAuth, not by proxy directly.
+```
+
 #### Status
 
 ```
 POST /api/v1/status
   Response: { "node_id": "3d2238...", "entity_id": "russell",
+              "role": "personal",
+              "capabilities": { "keeper": false, "archive": false, "relay": false },
               "uptime_secs": 3600,
               "peers_warm": 2, "peers_hot": 1,
-              "groups": ["seed-drill"] }
+              "groups": ["seed-drill"],
+              "version": "0.1.0" }
 
 POST /api/v1/peers
-  Response: { "warm": 2, "hot": 1, "total": 3 }
+  Response: { "peers": [{ "node_id", "addr", "state", "rtt_ms",
+                           "score", "groups", "capabilities" }],
+              "summary": { "warm": 2, "hot": 1, "cold": 5, "total": 8 } }
 ```
 
 ### 3.2 Node <-> Peer (QUIC P2P)
@@ -234,185 +287,493 @@ ranking. This keeps the Rust node simple.
 **R4 approach**: Move embedding + vector search into the Rust node
 (rust-bert or candle). Not now.
 
+### 3.6 Dashboard HTTP API (port 3847)
+
+The proxy serves a dashboard HTTP server for human interaction.
+This is Martin's primary interface contract -- the API he builds the UI against.
+
+**Auth**: GitHub OAuth 2.0 or session cookie. API keys for CLI uploads.
+
+#### Authentication
+
+```
+GET  /auth/status
+  Response: { "authenticated": bool, "entity_id": "russell",
+              "github_id": "russwing", "org": "seed_drill" }
+
+GET  /auth/github
+  Redirects to GitHub OAuth. Query: ?redirect=/dashboard
+  Scopes: read:user, read:org
+
+GET  /auth/github/callback
+  Handles OAuth code exchange. Sets session cookie.
+  Redirects to original ?redirect target.
+
+POST /auth/logout
+  Clears session cookie.
+  Response: { "ok": true }
+```
+
+#### Entity Profile
+
+```
+GET  /dash/api/profile/:entityId
+  Auth: session cookie (own profile) or admin role
+  Response: { "entity_id", "github_id", "name", "org", "roles",
+              "session_count", "created_at", "last_active" }
+
+POST /dash/api/profile/:entityId/api-key
+  Auth: session cookie (own profile only)
+  Response: { "api_key": "ck_<64hex>" }
+  Note: Regenerates key. Old key invalidated immediately.
+
+DELETE /dash/api/profile/:entityId
+  Auth: session cookie (own profile only)
+  Response: { "ok": true, "items_deleted": 0 }
+  Query: ?delete_items=true to also delete L2 items
+
+GET  /dash/api/profile/:entityId/export
+  Auth: session cookie (own profile only)
+  Response: JSON blob of L1 + all owned L2 items (decrypted)
+  Note: Proxy decrypts before serving. Large response.
+```
+
+#### Memory (Dashboard View)
+
+```
+GET  /dash/api/hot/:entityId
+  Auth: session cookie
+  Response: { "data": <decrypted_l1_json> }
+
+GET  /dash/api/l2/search
+  Auth: session cookie
+  Query: ?q=game+theory&type=learning&limit=20
+  Response: { "results": [{ "id", "type", "name", "tags", "score",
+                             "group_id", "created_at" }] }
+
+GET  /dash/api/l2/item/:id
+  Auth: session cookie + visibility check
+  Response: { "data": <decrypted_item>, "meta": { ... } }
+```
+
+#### Groups (Dashboard View)
+
+```
+GET  /dash/api/groups
+  Auth: session cookie
+  Response: { "groups": [{ "id", "name", "role", "member_count",
+                            "culture", "created_at" }] }
+  Note: Only groups the authenticated entity is a member of.
+
+GET  /dash/api/groups/:groupId
+  Auth: session cookie + membership check
+  Response: { "group": { ... }, "members": [...],
+              "recent_items": [...], "stats": { ... } }
+
+GET  /dash/api/groups/:groupId/items
+  Auth: session cookie + membership check
+  Query: ?since=2026-01-30T00:00:00Z&limit=50
+  Response: { "items": [ItemHeader], "has_more": bool }
+```
+
+#### Node Status (Dashboard View)
+
+```
+GET  /dash/api/status
+  Auth: session cookie
+  Response: { "node": { "id", "role", "capabilities", "uptime",
+                         "version" },
+              "peers": { "warm", "hot", "cold", "total" },
+              "storage": { "l1_users", "l2_items", "groups",
+                           "db_size_bytes" },
+              "encryption": { "enabled", "provider" } }
+
+GET  /dash/api/peers
+  Auth: session cookie + admin role
+  Response: { "peers": [{ "node_id", "addr", "state", "rtt_ms",
+                           "score", "groups", "capabilities",
+                           "connected_since" }] }
+```
+
+#### Admin (Multi-Tenant)
+
+```
+GET  /dash/api/admin/entities
+  Auth: session cookie + admin role
+  Response: { "entities": [{ "id", "github_id", "name", "org",
+                              "session_count", "last_active",
+                              "l2_item_count" }] }
+
+GET  /dash/api/admin/stats
+  Auth: session cookie + admin role
+  Response: { "entities": N, "groups": N, "l2_items": N,
+              "db_size_bytes": N, "uptime_secs": N,
+              "peers": { "warm", "hot", "cold" } }
+
+GET  /dash/api/admin/audit
+  Auth: session cookie + admin role
+  Query: ?since=2026-01-30T00:00:00Z&limit=100
+  Response: { "entries": [{ "timestamp", "entity_id", "action",
+                             "target_type", "target_id", "group_id",
+                             "result" }] }
+```
+
+#### Enrollment (Device Authorization)
+
+```
+GET  /enroll
+  Serves enrollment page. Entity enters device code, authenticates
+  via GitHub OAuth, dashboard calls node to complete registration.
+
+POST /enroll/verify
+  Request: { "device_code": "ABCD-EFGH" }
+  Auth: session cookie (GitHub OAuth must be complete)
+  Response: { "ok": true, "entity_id": "russell" }
+  Side effect: Calls POST /api/v1/device/register on Rust node.
+```
+
+### 3.7 Role-Specific API Surfaces
+
+The proxy exposes additional endpoints based on its configured role.
+Default (`personal`) exposes only the base dashboard. Other roles add:
+
+| Role | Additional Endpoints | Purpose |
+|------|---------------------|---------|
+| `personal` | (base only) | Default. Personal entity dashboard. |
+| `bootnode` | `/dash/api/peers` (all users) | Peer visibility for ops. |
+| `keeper` | `/dash/api/keeper/*` | Shard management, enrollment monitoring. R4. |
+| `archive` | `/dash/api/archive/*` | Storage usage, retention, lineage. R4. |
+
+Keeper and archive endpoints are defined here for completeness but
+implemented in R4:
+
+```
+GET  /dash/api/keeper/shards
+  Response: { "shards": [{ "entity_id", "shard_id", "stored_at",
+                            "size_bytes", "healthy": bool }],
+              "total": N, "capacity": N }
+
+GET  /dash/api/keeper/enrollments
+  Response: { "recent": [{ "entity_id", "device_code", "status",
+                            "timestamp" }] }
+
+GET  /dash/api/archive/stats
+  Response: { "total_items": N, "total_bytes": N,
+              "groups": [{ "id", "item_count", "bytes" }],
+              "retention_policy": { ... } }
+
+GET  /dash/api/archive/lineage/:itemId
+  Response: { "chain": [{ "id", "author_id", "timestamp",
+                           "parent_id" }] }
+```
+
+### 3.8 Static Dashboard Pages
+
+Martin builds these. The proxy serves them from `/dashboard/`.
+
+| Page | URL | Purpose |
+|------|-----|---------|
+| Landing | `/` | Marketing/status (unauthenticated) |
+| Login | `/login` | GitHub OAuth trigger |
+| Dashboard | `/dashboard` | Authenticated entity view (identity, memory, groups) |
+| Admin | `/admin` | Admin panel (entities, stats, audit) -- role-gated |
+| Enroll | `/enroll` | Device enrollment (enter code, OAuth, complete) |
+| Groups | `/groups` | Group management (list, create, members, culture) |
+| Peers | `/peers` | Peer visibility (admin/bootnode only) |
+
 ---
 
-## 4. Work Packages
+## 4. Work Packages (Updated)
 
-### WP1: @cordelia/proxy (R3-021) -- Martin
+### WP1: @cordelia/proxy MCP + Core (R3) -- Russell
 
-**What**: New TypeScript package. Thin MCP proxy that speaks stdio to
-agents and HTTP to the local Rust node.
+**What**: Proxy MCP server, encryption boundary, node client, novelty engine.
+Russell builds this weekend using existing TypeScript code as base.
 
 **Scope**:
 - MCP server via `@modelcontextprotocol/sdk` (stdio transport)
 - HTTP client to `localhost:9473` (bearer token auth)
 - L0 in-memory cache (L1 hot context + recent L2 search results)
 - 25 MCP tools (same interface as current `server.ts`)
-- Encryption/decryption (reuse existing `crypto.ts`)
-- Novelty engine (reuse existing `novelty.ts`)
-- Schema validation (reuse existing `schema.ts`)
-- Embeddings (reuse existing `embeddings.ts`, optional)
+- Encryption/decryption boundary (AES-256-GCM, scrypt)
+- Novelty engine (pattern matching, scoring)
+- Schema validation (Zod types)
+- Role-aware config loading from TOML
+- Embeddings (Ollama, optional)
 
 **Does NOT include**:
+- Dashboard HTML/CSS/JS (that's Martin, WP2)
+- Enrollment flow UI (that's Martin, WP2)
+- Admin panel UI (that's Martin, WP2)
 - P2P networking (that's the Rust node)
 - SQLite storage (that's the Rust node)
-- Governor, replication, peer management
-- Policy engine (moves to Rust node in R4)
 
-**Interface contract**: Section 3.1 above. The proxy is a client.
+**Deliverables**:
+- `src/server.ts` -- MCP server entry point
+- `src/node-client.ts` -- HTTP client for Rust node API
+- `src/cache.ts` -- L0 in-memory cache with TTL
+- `src/tools.ts` -- MCP tool handlers
+- `src/crypto.ts` -- encryption boundary
+- `src/novelty.ts` -- novelty engine
+- `src/schema.ts` -- Zod schemas
+- `src/config.ts` -- TOML config loader
+- `src/http-server.ts` -- Dashboard HTTP server (API routes, static serving)
+- Full test suite (unit + integration)
 
-**Key design decisions for Martin**:
-1. This replaces the current `server.ts` for networked deployments.
-   Local-only (stdio, no Rust node) remains as fallback.
-2. The proxy should detect whether a Rust node is running
-   (`GET /api/v1/status`). If not, fall back to local SQLite.
-3. L0 cache: simple Map with TTL. L1 cached for session duration.
-   L2 search results cached for 5 minutes (configurable).
-4. Error handling: if Rust node is unreachable, degrade gracefully.
-   Log warning, serve from L0 cache where possible.
+**Key design decision**: The http-server.ts provides all `/dash/api/*`
+routes (section 3.6) with JSON responses. Martin builds the HTML/JS
+frontend that calls these APIs. The proxy serves Martin's dashboard
+as static files from `/dashboard/`.
 
-**Existing code to reuse** (from `/Users/russellwing/cordelia/src/`):
-- `crypto.ts` -- encryption/decryption (copy or import)
-- `novelty.ts` -- novelty analysis (copy or import)
-- `schema.ts` -- Zod schemas for L1/L2 validation
-- `embeddings.ts` -- Ollama/null provider
-- `integrity.ts` -- chain hash verification
+### WP2: Dashboard + Integration + Infrastructure -- Martin
 
-**Test strategy**:
-- Unit tests for HTTP client (mock Rust node responses)
-- Unit tests for L0 cache (TTL, invalidation)
-- Integration test: proxy <-> real Rust node on localhost
-- MCP protocol conformance (existing MCP SDK test helpers)
+**What**: Dashboard UI, enrollment flow, admin panel, CI/CD, deployment.
+Martin starts Monday with complete API contract (section 3.6).
 
-**Files Martin creates** (new package, no conflicts):
-```
-cordelia/packages/proxy/
-  package.json
-  tsconfig.json
-  src/
-    index.ts          -- entry point, stdio MCP server
-    node-client.ts    -- HTTP client for Rust node API
-    cache.ts          -- L0 in-memory cache
-    tools.ts          -- MCP tool handlers (thin, delegate to client)
-    fallback.ts       -- local SQLite fallback when node unavailable
-  test/
-    node-client.test.ts
-    cache.test.ts
-    integration.test.ts
-```
+**Scope**:
+- Dashboard HTML/CSS/JS (calls `/dash/api/*` endpoints)
+- Enrollment page (`/enroll` -- device code entry + GitHub OAuth)
+- Admin panel (`/admin` -- entity management, stats, audit)
+- Group management UI (`/groups` -- list, create, members, culture)
+- Peer visibility UI (`/peers` -- for bootnode/admin roles)
+- CI/CD pipeline (GitHub Actions for both repos)
+- Deployment (Fly.io, Docker, install script updates)
+- Integration testing (proxy <-> Rust node end-to-end)
 
-### WP2: Peer Replication Protocol (R3-020) -- Russell
+**Does NOT include**:
+- MCP protocol handling (that's Russell, WP1)
+- Encryption/decryption logic (that's Russell, WP1)
+- Rust node changes (that's Russell, WP3)
+- Novelty engine (that's Russell, WP1)
+
+**Interface contract**: Section 3.6 above. Martin's frontend is a client
+of the dashboard API. All state lives in the Rust node; the proxy is
+stateless except for L0 cache and session cookies.
+
+### WP3: Peer Replication Protocol (R3) -- Russell
 
 **What**: Complete the culture-governed replication between Rust nodes.
 
-**Scope** (all in Rust, all in `cordelia-node/crates/`):
-- `cordelia-replication/src/engine.rs`: flesh out `on_local_write` dispatch
-  and `on_receive` with full conflict resolution
-- `cordelia-node/src/replication_task.rs`: complete anti-entropy sync loop,
-  wire up write dispatch to actual QUIC streams
-- `cordelia-node/src/mini_protocols.rs`: implement memory-push handler
-  (inbound side of eager push)
+**Scope** (all in Rust, all in `cordelia-core/crates/`):
+- `cordelia-replication/src/engine.rs`: wire dispatch + conflict resolution
+- `cordelia-node/src/replication_task.rs`: anti-entropy sync loop
+- `cordelia-node/src/mini_protocols.rs`: memory-push handler (inbound)
+- `cordelia-api`: add device enrollment endpoints (section 3.1)
+- `cordelia-api`: add detailed peers endpoint (section 3.1)
 - `cordelia-protocol/src/messages.rs`: add any missing message variants
-- `cordelia-governor/src/lib.rs`: already done (reconnect backoff landed today)
-
-**Does NOT include**:
-- MCP proxy (that's Martin)
-- TypeScript changes
-- API changes (unless new endpoints needed for replication status)
 
 **Key tasks**:
 1. Wire `WriteNotification` -> `dispatch_outbound` -> QUIC stream to hot peers
-2. Implement inbound push handler (peer sends us a `FetchResponse`,
-   we call `on_receive`, reply `PushAck`)
+2. Implement inbound push handler
 3. Complete anti-entropy: periodic sync headers -> diff -> fetch missing
 4. Culture-aware dispatch: chatty=eager push, moderate=notify+fetch, taciturn=passive
 5. Tombstone handling: deletions replicate as `is_deletion=true` headers
-6. Integration test: two nodes, write on A, verify appears on B
+6. Device enrollment endpoints on Rust API
+7. Integration test: two nodes, write on A, verify appears on B
 
-**Files Russell touches** (Rust only, no conflicts with WP1):
-```
-cordelia-node/crates/
-  cordelia-replication/src/engine.rs
-  cordelia-node/src/replication_task.rs
-  cordelia-node/src/mini_protocols.rs
-  cordelia-protocol/src/messages.rs  (if needed)
-  cordelia-governor/src/lib.rs       (done - backoff fix)
-```
+### WP4: Shared -- API Contract Verification
 
-### WP3: Shared -- API Contract Verification
-
-**What**: Ensure WP1 and WP2 agree on the HTTP API contract.
+**What**: Ensure all work packages agree on the HTTP API contracts.
 
 **How**:
-- Martin writes HTTP client tests against mock responses (WP1)
-- Russell ensures the Rust API returns those exact shapes (WP2/existing)
-- Any contract drift is caught by integration test: proxy <-> real node
+- Russell builds proxy API routes against section 3.6 contract (WP1)
+- Russell ensures Rust API returns exact shapes from section 3.1 (WP3)
+- Martin builds dashboard frontend against section 3.6 contract (WP2)
+- Cross-language contract tests in CI verify both sides (TR-CI-005)
+- Integration test: dashboard -> proxy API -> node API -> SQLite
 
-**Shared artifact**: This HLD, section 3.1. The contract.
+**Shared artifacts**: This HLD, sections 3.1 and 3.6. The contracts.
 
 ---
 
 ## 5. Dependency Graph
 
 ```
-    WP1 (proxy)              WP2 (replication)
-    Martin                   Russell
-        │                        │
-        │                        │
-        ▼                        ▼
-    ┌────────┐              ┌────────┐
-    │ Proxy  │              │ Repl   │
-    │ (TS)   │              │ (Rust) │
-    └───┬────┘              └───┬────┘
-        │                       │
-        │   ┌───────────────┐   │
-        └──>│ HTTP API      │<──┘
-            │ (cordelia-api)│
-            │ Port 9473     │
-            └───────────────┘
-                 │
-            ┌────┴────┐
-            │ SQLite  │
-            │ (shared │
-            │  file)  │
-            └─────────┘
+    WP1 (proxy core)        WP2 (dashboard)         WP3 (replication)
+    Russell (weekend)       Martin (from Monday)     Russell (ongoing)
+        │                       │                        │
+        ▼                       ▼                        ▼
+    ┌────────┐           ┌──────────┐              ┌────────┐
+    │ Proxy  │           │Dashboard │              │ Repl   │
+    │ MCP +  │           │ HTML/JS  │              │ (Rust) │
+    │ API    │           │ Enroll   │              │        │
+    │ routes │           │ Admin    │              │        │
+    └───┬────┘           └────┬─────┘              └───┬────┘
+        │                     │                        │
+        │        ┌────────────┘                        │
+        │        │ calls /dash/api/*                   │
+        ▼        ▼                                     │
+    ┌─────────────────┐                                │
+    │ Proxy HTTP      │                                │
+    │ Server :3847    │                                │
+    │ (serves API +   │                                │
+    │  static files)  │                                │
+    └────────┬────────┘                                │
+             │                                         │
+             │ calls /api/v1/*                          │
+             ▼                                         │
+        ┌───────────────┐                              │
+        │ Rust Node     │<─────────────────────────────┘
+        │ HTTP API      │
+        │ Port 9473     │
+        └───────┬───────┘
+                │
+           ┌────┴────┐
+           │ SQLite  │
+           └─────────┘
 ```
 
-**No source file conflicts.** Martin works in `packages/proxy/` (new).
-Russell works in `cordelia-node/crates/` (existing Rust).
+**Repo boundaries**:
+- WP1 + WP2: `cordelia-proxy` repo
+- WP3: `cordelia-core` repo
 
-Both depend on the HTTP API contract (section 3.1), which is already
-implemented in `cordelia-api`. Changes to the API require coordination.
+Martin works in `cordelia-proxy/dashboard/` (new files).
+Russell works in `cordelia-proxy/src/` (proxy core) and `cordelia-core/crates/` (Rust).
+No source file conflicts between WP1 and WP2.
 
 ---
 
 ## 6. Development Workflow
 
+### Repos
+- `cordelia-proxy` (TypeScript) -- Russell (WP1) + Martin (WP2)
+- `cordelia-core` (Rust) -- Russell (WP3)
+
 ### Branching
-- Martin: `feature/proxy` branch
-- Russell: `feature/replication` branch
+- Martin: branches in `cordelia-proxy` for dashboard work
+- Russell: `main` in `cordelia-proxy` for proxy core (ships first)
+- Russell: branches in `cordelia-core` for replication work
 - Both merge to `main` via PR
-- No shared files = no merge conflicts
 
 ### Testing independently
-- Martin: `npm test` in `packages/proxy/` (mocked node)
-- Russell: `cargo test` in `cordelia-node/` (unit + integration)
+- Russell (proxy): `npm test` in `cordelia-proxy` (mocked node)
+- Russell (Rust): `cargo test` in `cordelia-core`
+- Martin: browser tests against `npm run dashboard:dev` (proxy running)
 
 ### Integration testing
 - Start Rust node: `cordelia-node` (listens on 9473 + 9474)
-- Start proxy: `node packages/proxy/dist/index.js` (stdio)
+- Start proxy: `npm start` in `cordelia-proxy` (stdio MCP + HTTP :3847)
 - Test: MCP tool call -> proxy -> HTTP -> Rust node -> SQLite
-- Two-node test: start two Rust nodes, write via proxy on node A,
-  verify replication to node B, read via proxy on node B
-
-### Shared SQLite file
-Both the proxy (via HTTP to Rust node) and the Rust node access the
-same SQLite file. WAL mode handles concurrent access. The proxy never
-touches SQLite directly -- always via HTTP API.
+- Test: Dashboard -> /dash/api/* -> proxy -> Rust node -> SQLite
+- Two-node test: write on node A, verify replication to node B
 
 ---
 
-## 7. Storage Architecture
+## 7. Multi-Tenant Model
+
+Cordelia supports two deployment models. The architecture is identical;
+the difference is operational.
+
+### Model A: Self-Hosted (Single Tenant)
+
+```
+    ┌─────────────────────────────────────────┐
+    │  Org Infrastructure                      │
+    │                                          │
+    │  ┌──────────┐    ┌────────────────────┐ │
+    │  │ Proxy    │───>│ Node               │ │
+    │  │ :3847    │    │ :9473 (API)        │ │
+    │  │          │    │ :9474 (P2P)        │ │
+    │  └──────────┘    │ SQLite             │ │
+    │                   └────────────────────┘ │
+    │                                          │
+    │  All entities in one org.                │
+    │  Trust boundary = network.               │
+    │  Encryption keys managed by org.         │
+    │                                          │
+    │  ./install.sh and go.                    │
+    └─────────────────────────────────────────┘
+```
+
+- One node + one proxy per org
+- All entities share the instance
+- No tenant isolation needed -- trust boundary is the org network
+- Groups provide internal access control (viewer/member/admin/owner)
+- Org manages own encryption keys
+- This is the Cordelia Foundation offering: AGPL, run it yourself
+
+### Model B: Managed (Multi-Tenant)
+
+```
+    ┌─────────────────────────────────────────────────────┐
+    │  Seed Drill Infrastructure                           │
+    │                                                      │
+    │  ┌──────────────────────────────────────────┐       │
+    │  │  Proxy :3847                              │       │
+    │  │                                           │       │
+    │  │  Org A entities ──> org_id scoping        │       │
+    │  │  Org B entities ──> org_id scoping        │       │
+    │  │  Org C entities ──> org_id scoping        │       │
+    │  │                                           │       │
+    │  │  Session cookie carries org_id.           │       │
+    │  │  All queries scoped to org_id.            │       │
+    │  │  Cross-org visibility = impossible.       │       │
+    │  └─────────────────┬─────────────────────────┘       │
+    │                     │                                 │
+    │  ┌─────────────────┴─────────────────────────┐       │
+    │  │  Node :9473                                │       │
+    │  │                                            │       │
+    │  │  Groups enforce org isolation.             │       │
+    │  │  Each org = top-level group.               │       │
+    │  │  Org admin = group owner.                  │       │
+    │  │  Seed Drill never holds encryption keys.   │       │
+    │  │                                            │       │
+    │  │  Per-org encryption: each org has own key. │       │
+    │  │  Proxy decrypts per-session.               │       │
+    │  │  Node stores opaque blobs.                 │       │
+    │  └────────────────────────────────────────────┘       │
+    │                                                      │
+    │  + Keeper nodes (shard backup, R4)                    │
+    │  + Archive nodes (L3 cold store, R4)                  │
+    │  + Bootnode (always-on peer discovery)                │
+    └─────────────────────────────────────────────────────┘
+```
+
+- Seed Drill runs infrastructure for multiple orgs
+- Each org = a top-level group with org_id
+- Strict isolation: all queries scoped by org_id, enforced at proxy + node
+- Each org manages own encryption keys (Seed Drill never has them)
+- Per-org OAuth app or SSO federation
+- Metering and billing per org (R4+)
+- This is the Seed Drill Ltd commercial offering
+
+### Isolation Guarantees
+
+| Concern | Self-Hosted | Managed |
+|---------|-------------|---------|
+| Data isolation | Network boundary | org_id scoping in every query |
+| Auth | Single OAuth app | Per-org OAuth app or SSO |
+| Encryption keys | Org manages | Org manages (Seed Drill never holds) |
+| Admin visibility | Org admin sees all | Org admin sees only own org |
+| Data residency | Org's servers | Seed Drill infra (UK, configurable) |
+| Billing | N/A | Per-org metering |
+| Groups | Internal only | Org-scoped, cross-org via federation (R4+) |
+
+### Architectural Invariant
+
+**Seed Drill never holds plaintext or encryption keys, even in managed mode.**
+The proxy decrypts in the entity's session only. Managed mode means Seed Drill
+runs the node infrastructure. The same Signal model: infrastructure provider
+that is structurally unable to read the content.
+
+### Multi-Tenant Implementation
+
+The group model already provides the primitives:
+
+1. **Org = top-level group**. Creating an org creates a group with `org_id`.
+   All entity membership is through this group.
+2. **org_id on session**. OAuth callback resolves entity -> org. Session
+   cookie carries org_id. Proxy scopes all node API calls by org_id.
+3. **Node-level scoping**. The Rust node's API accepts optional `org_id`
+   parameter. When provided, all queries are filtered. When absent
+   (self-hosted), no filtering -- backward compatible.
+4. **No cross-org leakage**. Group membership is the access primitive.
+   Entities can only see items in groups they belong to. Org isolation
+   is a consequence of group isolation.
+
+---
+
+## 8. Storage Architecture
 
 ### Single SQLite Database
 
@@ -447,6 +808,10 @@ SQLite database (single file, WAL mode)
 │   Roles: owner | admin | member | viewer
 │   Postures: active | silent | emcon
 │
+├── devices             Enrolled devices (R3)
+│   (device_id, entity_id) -> bearer_token_hash, enrolled_at,
+│   last_seen, user_agent
+│
 ├── access_log          Audit trail (who/what/when/group)
 ├── audit               System audit
 ├── integrity_canary    Tamper detection
@@ -454,7 +819,7 @@ SQLite database (single file, WAL mode)
 └── [indexes]           group_id, parent_id, author_id, access_log
 ```
 
-Schema: `cordelia-node/crates/cordelia-storage/src/schema_v4.sql`
+Schema: `cordelia-core/crates/cordelia-storage/src/schema_v4.sql`
 
 ### Primitives to Storage Mapping
 
@@ -521,7 +886,7 @@ config section advertises what the node provides to the network.
 
 ---
 
-## 8. Crate Map (Rust)
+## 9. Crate Map (Rust)
 
 For Martin's reference. 7 crates, clear responsibilities:
 
@@ -539,17 +904,23 @@ For Martin's reference. 7 crates, clear responsibilities:
 
 ---
 
-## 9. Configuration
+## 10. Configuration
 
 ### Rust Node (`~/.cordelia/config.toml`)
 
 ```toml
 [node]
+role = "personal"               # personal | bootnode | relay | keeper | archive
 identity_key = "~/.cordelia/node.key"
-api_transport = "http"          # or "unix"
 api_addr = "127.0.0.1:9473"
-database = "~/cordelia/memory/cordelia.db"
+database = "~/.cordelia/cordelia.db"
 entity_id = "russell"
+
+[capabilities]
+keeper = false
+archive = false
+relay = false
+dashboard = true                # Expose dashboard HTTP on proxy
 
 [network]
 listen_addr = "0.0.0.0:9474"
@@ -564,41 +935,89 @@ warm_min = 10
 
 [replication]
 sync_interval_moderate_secs = 300
+
+[keeper]
+# Only read when capabilities.keeper = true
+max_shards = 1000
+shard_storage = "~/.cordelia/shards/"
+
+[archive]
+# Only read when capabilities.archive = true
+storage_backend = "local"       # "local" | "s3"
+retention_days = 3650
 ```
 
-### Proxy (environment variables)
+### Proxy (`~/.cordelia/proxy.toml`)
+
+```toml
+[proxy]
+node_url = "http://127.0.0.1:9473"
+node_token_file = "~/.cordelia/node-token"
+encryption_key_file = "~/.cordelia/keyfile"    # Or platform keychain
+dashboard_port = 3847
+dashboard_enabled = true
+
+[embedding]
+provider = "none"               # "none" | "ollama" | "openai"
+url = "http://localhost:11434"
+model = "nomic-embed-text"
+
+[cache]
+l1_ttl_secs = 0                 # 0 = session duration
+l2_ttl_secs = 300               # 5 minutes
+
+[oauth]
+github_client_id = "..."
+github_client_secret = "..."    # Or via env: CORDELIA_GITHUB_SECRET
+session_secret = "..."          # Or via env: CORDELIA_SESSION_SECRET
+```
+
+**Environment variable overrides** (for backward compatibility and Docker):
 
 ```
-CORDELIA_NODE_URL=http://127.0.0.1:9473
-CORDELIA_NODE_TOKEN=<bearer token>
-CORDELIA_ENCRYPTION_KEY=<passphrase>
-CORDELIA_EMBEDDING_PROVIDER=ollama
-CORDELIA_EMBEDDING_URL=http://localhost:11434
+CORDELIA_NODE_URL           -> proxy.node_url
+CORDELIA_NODE_TOKEN         -> inline token (bypasses file)
+CORDELIA_ENCRYPTION_KEY     -> inline key (bypasses file)
+CORDELIA_EMBEDDING_PROVIDER -> embedding.provider
+CORDELIA_DASHBOARD_PORT     -> proxy.dashboard_port
+CORDELIA_GITHUB_CLIENT_ID   -> oauth.github_client_id
+CORDELIA_GITHUB_SECRET      -> oauth.github_client_secret
+CORDELIA_SESSION_SECRET     -> oauth.session_secret
 ```
+
+TOML file takes precedence over env vars when both are set.
 
 ---
 
-## 10. What's Already Done vs TODO
+## 11. What's Already Done vs TODO
 
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Rust P2P transport (QUIC) | Done | quinn, self-signed TLS |
 | 5 mini-protocols | Done | handshake, keepalive, peer-share, sync, fetch |
-| Governor (peer state machine) | Done | + reconnect backoff (today) |
+| Governor (peer state machine) | Done | + reconnect backoff |
 | Rust HTTP API | Done | 11 endpoints, bearer auth |
 | Rust storage (SQLite) | Done | schema v4, WAL, FTS5 |
-| Rust crypto | Done | AES-256-GCM, Ed25519, round-trip compatible with TS |
+| Rust crypto | Done | AES-256-GCM, Ed25519, round-trip with TS |
 | Bootnode deployment | Done | boot1.cordelia.seeddrill.io:9474 |
+| Proxy MCP server (existing) | Done | 187 tests, 25 tools, encryption |
+| Proxy dashboard HTTP (existing) | Done | Auth, profile, L1/L2 API, admin |
+| Repo split | Done | cordelia-core (Rust) + cordelia-proxy (TS) |
 | Replication engine | Partial | Engine + config done, wire dispatch TODO |
 | Replication task | Partial | Structure done, anti-entropy TODO |
 | Memory push (inbound) | TODO | Receive pushed items from peers |
-| @cordelia/proxy | TODO | New package (WP1) |
+| Device enrollment endpoints | TODO | On Rust API (section 3.1) |
+| Proxy TOML config | TODO | Replace env-only config |
+| Dashboard enrollment page | TODO | Device code + OAuth flow |
+| Dashboard group management | TODO | List, create, members, culture |
+| Dashboard peer visibility | TODO | Governor status, health |
+| Multi-tenant org scoping | TODO | org_id on session + queries |
 | Integration test (proxy+node) | TODO | End-to-end |
 | Two-node replication test | TODO | Write on A, read on B |
 
 ---
 
-## 11. Deployment Vision: Internal / Public / Services
+## 12. Deployment Vision: Internal / Public / Services
 
 The network has two memory spaces, same technology, different trust:
 
@@ -661,26 +1080,6 @@ private groups AND public constitutional groups. Group culture governs
 what flows where. No special code needed -- group membership + culture
 already handles selective forwarding.
 
-### Node Capabilities (config extension needed)
-
-```toml
-[capabilities]
-relay = false       # Accept connections from external peers
-keeper = false      # Accept and store Shamir shards
-archive = false     # Accept L3 cold storage requests
-
-[keeper]
-max_shards = 1000
-shard_storage = "~/.cordelia/shards/"
-enrollment_token = "..."    # For entity enrollment API
-
-[archive]
-storage_backend = "s3"      # or "local"
-s3_bucket = "cordelia-archive-prod"
-s3_region = "eu-west-2"
-retention_days = 3650       # 10 years
-```
-
 ### Intranet -> Internet Trend
 
 Same trajectory as the web:
@@ -691,12 +1090,6 @@ Same trajectory as the web:
    Seed Drill runs keeper + archive nodes as first service provider.
 4. **R5+**: Other orgs run their own keepers/archives. Market forms.
    Internal/public boundary blurs as trust calibration proves out.
-
-The cooperative equilibrium proof (see `decisions/2026-01-31-cooperative-
-equilibrium-proof.md`) is the theoretical foundation for why the public
-space works: honest cooperation is the Nash equilibrium under Cordelia's
-mechanism design. Without that proof, public memory is just a tragedy
-of the commons waiting to happen.
 
 ### Seed Drill as Service Provider
 
@@ -717,64 +1110,51 @@ unable to read the content. Revenue from reliability, not from data.
 
 ---
 
-## 12. Martin's Full Trajectory
+## 13. Martin's Full Trajectory
 
-Martin's scope is larger than WP1. Here's the phased view:
+Martin's scope is larger than WP2. Here's the phased view:
 
-### Phase 1: @cordelia/proxy (R3 -- now)
-MCP proxy. Get agents talking to Rust nodes. Bounded, testable.
-See WP1 (Section 4) for full spec.
+### Phase 1: Dashboard + Integration (R3 -- from Monday)
+Dashboard UI that calls proxy API (section 3.6). Enrollment page.
+Admin panel. Group management. CI/CD pipeline. Deployment.
+See WP2 (Section 4) for full spec.
 
 ### Phase 2: Operational Infrastructure (R3+)
-- **Enrollment CLI**: `cordelia enroll --keeper boot1.cordelia.seeddrill.io`
-  Entity generates shards, distributes to keepers, receives confirmation.
-- **Token management**: `cordelia token create --entity russell --scope group:seed-drill`
-  Issue, rotate, revoke bearer tokens. Stored in `~/.cordelia/tokens/`.
-- **Key distribution**: Envelope encryption key exchange when entities join groups.
-  Signal-pattern: group key encrypted per member key. Martin implements the
-  key exchange protocol; Russell implements the group key rotation trigger.
-- **Health monitoring**: `cordelia status --keepers` shows shard health across
-  keepers. Alerting when shards go stale or keepers go offline.
+- **Enrollment CLI**: `npx @cordelia/proxy enroll`
+  RFC 8628 device authorization grant. See enrollment-sequence.md.
+- **Token management**: Issue, rotate, revoke bearer tokens.
+  Stored in `~/.cordelia/tokens/`.
+- **Key distribution**: Envelope encryption key exchange when entities
+  join groups. Signal-pattern: group key encrypted per member key.
+- **Health monitoring**: `cordelia status --keepers` shows shard health.
 
 ### Phase 3: Keeper Infrastructure (R4)
-- **Shard protocol**: New mini-protocol (0x06) on QUIC layer for shard
-  push/pull/verify. Rust implementation. Martin builds the operational
-  wrapper; Russell builds the wire protocol.
-- **Reincarnation workflow**: Entity triggers reincarnation (or dead-man
-  switch). Keepers reconstitute from n-of-m shards. New node bootstraps
-  from reconstituted state.
-- **Shard rotation**: Periodic re-sharing to limit exposure window.
-- **Keeper dashboard**: Web UI for Seed Drill ops team to monitor shard
-  health, keeper availability, enrollment rate.
+- **Shard protocol**: Mini-protocol 0x06 on QUIC. Rust wire protocol
+  (Russell). Operational wrapper (Martin).
+- **Reincarnation workflow**: n-of-m shard reconstitution.
+- **Keeper dashboard**: `/dash/api/keeper/*` endpoints + UI.
 
 ### Phase 4: Archive Infrastructure (R4)
-- **L3 storage backend**: S3-compatible durable store for compressed
-  session history.
-- **Lineage API**: Query provenance chains across archived sessions.
-- **Compliance features**: Retention policies, GDPR right-to-forget
-  (delete lineage chain on entity request), audit export.
-- **Archive dashboard**: Storage usage, query latency, retention stats.
+- **L3 storage backend**: S3-compatible durable store.
+- **Lineage API**: Provenance chain queries.
+- **Compliance**: GDPR right-to-forget, audit export.
+- **Archive dashboard**: `/dash/api/archive/*` endpoints + UI.
 
 ### Phase 5: Service Operations (R4+)
-- **SLA monitoring**: Keeper availability, archive durability, latency
-  percentiles. Alerting to ops team.
-- **Billing**: Per-entity keeper/archive subscription. Usage metering.
-- **Customer onboarding**: Self-serve enrollment via seeddrill.io.
-  Choose keeper count (3/5/7), archive retention (1y/5y/10y), pay.
+- **SLA monitoring**: Keeper availability, archive durability.
+- **Billing**: Per-org keeper/archive subscription.
+- **Customer onboarding**: Self-serve via seeddrill.io.
 
 ### Work Split Principle
 
 Russell builds the **protocols and engines** (Rust, wire formats, state
-machines, game theory). Martin builds the **operational infrastructure**
-(CLI tooling, dashboards, enrollment workflows, key management, monitoring,
-deployment). Both contribute to the API contract between them.
-
-This is CTO vs CPO division: Martin makes it run reliably for customers;
-Russell makes it work correctly in theory and protocol.
+machines, game theory) and the **proxy core** (MCP, encryption, novelty).
+Martin builds the **operational infrastructure** (dashboards, enrollment
+workflows, key management, monitoring, deployment, CI/CD).
 
 ---
 
-## 13. Non-Goals for R3
+## 14. Non-Goals for R3
 
 These are explicitly **not in scope** for the immediate sprint.
 Captured here so we don't accidentally build them:
@@ -790,12 +1170,13 @@ Captured here so we don't accidentally build them:
 - Keeper/archive infrastructure (Phase 3-4)
 - Public constitutional groups (R4)
 - Billing / SLA monitoring (Phase 5)
+- Proxy rewrite in Rust (evaluate when Rust MCP SDK stabilises)
 
 ---
 
-## 14. Structural Decisions to Get Right Now
+## 15. Structural Decisions to Get Right Now
 
-These R3 decisions affect whether the vision in Section 10 is possible:
+These R3 decisions affect whether the vision in sections 7 and 12 is possible:
 
 1. **Node config must support capabilities** -- Add `[capabilities]`
    section to `config.toml` even if all are `false` for R3. Don't
@@ -838,6 +1219,15 @@ These R3 decisions affect whether the vision in Section 10 is possible:
    need stronger privacy specify `vector_encoding: "he-ckks"` in
    their manifest. Homomorphic encryption on vectors at ~100x compute
    cost. The protocol supports both; the group decides.
+
+9. **Proxy role via TOML** -- The proxy reads its role from config and
+   exposes only the relevant API surfaces. Default is `personal`
+   (minimal). This avoids keeper/archive code paths executing on
+   personal nodes.
+
+10. **Multi-tenant via groups** -- org_id is a group. No separate tenant
+    table. Multi-tenant isolation is a consequence of group isolation.
+    Self-hosted = no org scoping. Managed = org_id on every query.
 
 ---
 
