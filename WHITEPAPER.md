@@ -638,8 +638,12 @@ memory, they increase the group's capacity to extract value from
 future knowledge sharing. The benefit `b` of receiving a memory is
 not constant -- it is amplified by the receiver's conceptual frame.
 Groups with shared intellectual infrastructure extract superlinear
-returns from cooperation, making the cooperative equilibrium not just
-stable but increasingly attractive over time. See
+returns from cooperation. This has a structural consequence for the
+Nash equilibrium: because the benefit `b` grows with shared frame
+memory, the cooperation threshold `delta > c/b` becomes easier to
+satisfy over time. The basin of attraction around the cooperative
+equilibrium widens with each iteration -- cooperation becomes dominant
+for a progressively wider range of entities. See
 docs/design/game-theory.md Section 10 for the formal treatment.
 
 ### 9.2 Service Economics
@@ -736,6 +740,11 @@ applicable to AI memory systems.
 
 [8] M. Minsky, *The Society of Mind*, Simon and Schuster, 1986.
 Modular cognitive architecture parallels with multi-agent memory.
+
+[9] I. M. Banks, *The Player of Games*, Macmillan, 1988. Autonomous
+agents with sovereignty choosing cooperation over coercion; game
+theory as social structure; the Culture as a model for distributed
+systems of unequal agents cooperating without central authority.
 
 ---
 
