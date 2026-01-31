@@ -134,6 +134,11 @@ pub trait Storage: Send + Sync {
     fn list_members(&self, group_id: &str) -> Result<Vec<GroupMemberRow>>;
     fn get_membership(&self, group_id: &str, entity_id: &str) -> Result<Option<GroupMemberRow>>;
 
+    fn add_member(&self, group_id: &str, entity_id: &str, role: &str) -> Result<()>;
+    fn remove_member(&self, group_id: &str, entity_id: &str) -> Result<bool>;
+    fn update_member_posture(&self, group_id: &str, entity_id: &str, posture: &str) -> Result<bool>;
+    fn delete_group(&self, id: &str) -> Result<bool>;
+
     fn log_access(&self, entry: &AccessLogEntry) -> Result<()>;
 
     // L2 index (encrypted blob, singleton)
@@ -521,6 +526,44 @@ impl Storage for SqliteStorage {
         Ok(result)
     }
 
+    fn add_member(&self, group_id: &str, entity_id: &str, role: &str) -> Result<()> {
+        let conn = self.db()?;
+        conn.execute(
+            "INSERT INTO group_members (group_id, entity_id, role, posture, joined_at)
+             VALUES (?1, ?2, ?3, 'active', datetime('now'))
+             ON CONFLICT(group_id, entity_id) DO UPDATE SET
+               role = excluded.role",
+            params![group_id, entity_id, role],
+        )?;
+        Ok(())
+    }
+
+    fn remove_member(&self, group_id: &str, entity_id: &str) -> Result<bool> {
+        let conn = self.db()?;
+        let changes = conn.execute(
+            "DELETE FROM group_members WHERE group_id = ?1 AND entity_id = ?2",
+            params![group_id, entity_id],
+        )?;
+        Ok(changes > 0)
+    }
+
+    fn update_member_posture(&self, group_id: &str, entity_id: &str, posture: &str) -> Result<bool> {
+        let conn = self.db()?;
+        let changes = conn.execute(
+            "UPDATE group_members SET posture = ?3 WHERE group_id = ?1 AND entity_id = ?2",
+            params![group_id, entity_id, posture],
+        )?;
+        Ok(changes > 0)
+    }
+
+    fn delete_group(&self, id: &str) -> Result<bool> {
+        let conn = self.db()?;
+        // Delete members first (foreign key may not cascade depending on schema)
+        conn.execute("DELETE FROM group_members WHERE group_id = ?1", params![id])?;
+        let changes = conn.execute("DELETE FROM groups WHERE id = ?1", params![id])?;
+        Ok(changes > 0)
+    }
+
     fn log_access(&self, entry: &AccessLogEntry) -> Result<()> {
         let conn = self.db()?;
         conn.execute(
@@ -747,6 +790,75 @@ mod tests {
 
         let groups = storage.list_groups().unwrap();
         assert_eq!(groups.len(), 1);
+    }
+
+    #[test]
+    fn test_add_remove_member() {
+        let (_dir, storage) = test_db();
+
+        // FK: entity_id references l1_hot(user_id)
+        storage.write_l1("alice", b"{}").unwrap();
+        storage.write_l1("bob", b"{}").unwrap();
+
+        storage
+            .write_group("grp-m", "Member Test", "{}", "{}")
+            .unwrap();
+
+        storage.add_member("grp-m", "alice", "member").unwrap();
+        storage.add_member("grp-m", "bob", "viewer").unwrap();
+
+        let members = storage.list_members("grp-m").unwrap();
+        assert_eq!(members.len(), 2);
+
+        let alice = storage.get_membership("grp-m", "alice").unwrap().unwrap();
+        assert_eq!(alice.role, "member");
+        assert_eq!(alice.posture.as_deref(), Some("active"));
+
+        // Upsert: change role
+        storage.add_member("grp-m", "alice", "admin").unwrap();
+        let alice2 = storage.get_membership("grp-m", "alice").unwrap().unwrap();
+        assert_eq!(alice2.role, "admin");
+
+        // Remove
+        assert!(storage.remove_member("grp-m", "bob").unwrap());
+        assert!(!storage.remove_member("grp-m", "bob").unwrap()); // already removed
+        assert_eq!(storage.list_members("grp-m").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_update_member_posture() {
+        let (_dir, storage) = test_db();
+
+        storage.write_l1("carol", b"{}").unwrap();
+
+        storage
+            .write_group("grp-p", "Posture Test", "{}", "{}")
+            .unwrap();
+        storage.add_member("grp-p", "carol", "member").unwrap();
+
+        assert!(storage.update_member_posture("grp-p", "carol", "emcon").unwrap());
+        let carol = storage.get_membership("grp-p", "carol").unwrap().unwrap();
+        assert_eq!(carol.posture.as_deref(), Some("emcon"));
+
+        // Non-existent member
+        assert!(!storage.update_member_posture("grp-p", "nobody", "silent").unwrap());
+    }
+
+    #[test]
+    fn test_delete_group() {
+        let (_dir, storage) = test_db();
+
+        storage.write_l1("dave", b"{}").unwrap();
+
+        storage
+            .write_group("grp-d", "Delete Test", "{}", "{}")
+            .unwrap();
+        storage.add_member("grp-d", "dave", "owner").unwrap();
+
+        assert!(storage.delete_group("grp-d").unwrap());
+        assert!(storage.read_group("grp-d").unwrap().is_none());
+        assert!(storage.list_members("grp-d").unwrap().is_empty());
+        assert!(!storage.delete_group("grp-d").unwrap()); // already deleted
     }
 
     #[test]

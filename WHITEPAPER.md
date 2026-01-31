@@ -1,6 +1,6 @@
 # Cordelia: A Distributed Persistent Memory System for Autonomous Agents
 
-**Russell Wing, Martin Stevens, Claude (Opus 4.5)**
+**Russell Wing, Claude (Opus 4.5)**
 **Seed Drill (https://seeddrill.ai) -- January 2026**
 
 ---
@@ -197,9 +197,22 @@ would otherwise need to look up or be told.
 frameworks, and shared metaphors. A reference to Shannon's information
 theory, to Denning's working set model, to von Neumann-Morgenstern's
 game theory. Frame memory is not measured in bits -- it is measured in
-**Kullback-Leibler divergence reduction** between the agent's default
-reasoning distribution and the optimal distribution for the current
-task.
+**Kullback-Leibler divergence reduction** [15] between the agent's
+default reasoning distribution and the optimal distribution for the
+current task.
+
+The concept has antecedents. Minsky's frames [16] introduced the idea
+of structured knowledge that shapes how new information is interpreted
+-- stereotyped situations with slots that guide expectation and
+inference. Sweller's cognitive load theory [17] showed that schemas
+reduce the processing cost of new information by providing organised
+structures. Lakoff and Johnson [18] demonstrated that shared conceptual
+metaphors are not decorative but constitutive of reasoning itself. What
+we observe in practice extends these ideas into a new domain: the
+operational context of stateful AI agents, where frame memory can be
+measured empirically by its effect on the reasoning distribution, and
+where the cache hierarchy provides a mechanism for loading the right
+frame at the right time.
 
 The mechanism: when an agent loads frame memory at session start, it
 does not merely learn that the user has read certain books. It
@@ -225,6 +238,15 @@ well in practice: L1 is not just a smaller, faster L2. It is a
 qualitatively different kind of memory that shapes how all other
 memory is processed.
 
+To our knowledge, the formal characterisation of frame memory as KL
+divergence reduction in agent context -- and the resulting design
+principle that a memory hierarchy should distinguish between data
+that informs and frames that restructure reasoning -- has not been
+previously articulated. The closest existing work addresses schema
+acquisition in human learners [17] or static knowledge representation
+[16], not the dynamic loading of reasoning frames into stateful
+agents with measurable distributional effects.
+
 The design implication: novelty scoring should weight frame-shifting
 observations (a new conceptual connection, a new reasoning pattern, a
 new metaphor that restructures understanding) higher than factual
@@ -233,8 +255,56 @@ a domain is worth more than a hundred facts within the existing frame.
 
 ### 2.4 Novelty Filtering
 
-Not everything an agent encounters should be persisted. The novelty
-engine scores incoming information against nine signal types:
+Not everything an agent encounters should be persisted. The question
+is: which observations deserve a place in memory? The answer requires
+a formal definition of value.
+
+#### The Reconstitution Principle
+
+The value of a memory is not its length, its recency, or the
+importance of the entity that generated it. It is the degree to which
+the information it contains **cannot be reconstituted from the rest of
+the corpus**.
+
+Formally: given a memory M and the rest of the agent's memory corpus
+C, the novelty of M is its **conditional entropy** H(M|C) [4]. If
+H(M|C) is low, the memory is predictable given everything else the
+agent knows -- it is redundant, and losing it would cost little. If
+H(M|C) is high, the memory contains information present nowhere else
+-- it is irreplaceable.
+
+This connects to Kolmogorov complexity [19]: the novelty of M can be
+approximated by how much M can be compressed given C as context. A
+memory that compresses to near-zero given the corpus is redundant. A
+memory that remains incompressible is genuinely novel. We cannot
+compute true Kolmogorov complexity, but language model perplexity
+provides a practical approximation: the perplexity of M conditioned
+on C is a computable proxy for conditional entropy.
+
+The reconstitution principle has a direct consequence for the memory
+hierarchy. Over time, a well-functioning novelty filter produces a
+corpus where every surviving memory contributes unique information.
+The corpus becomes denser -- not in the sense of containing more data,
+but in the information-theoretic sense that the conditional entropy
+of each memory given the rest remains high. Redundancy is eliminated
+not by deduplication (which catches only syntactic overlap) but by
+the deeper test: can this be derived from what we already know?
+
+This extends Shannon's original formulation [4] in a specific
+direction. Shannon measured entropy of messages over a channel.
+Rate-distortion theory [20] established the minimum description
+length for a source at a given fidelity. What the reconstitution
+principle adds is the application of conditional entropy as a
+**memory retention criterion** for autonomous agents with bounded
+storage -- a selection pressure that produces corpora with
+monotonically increasing information density over time, analogous
+to natural selection operating on a population of memories where
+fitness is irreplaceability.
+
+#### Signal Classification
+
+In practice, the novelty engine scores incoming information against
+nine signal types that operationalise the reconstitution principle:
 
 | Signal | Example |
 |--------|---------|
@@ -248,11 +318,19 @@ engine scores incoming information against nine signal types:
 | working_pattern | How the collaboration works |
 | meta_learning | Insight about the collaboration itself |
 
+Each signal type is a heuristic proxy for conditional entropy.
+Corrections score high because they represent information the agent's
+model would not predict. Preferences score high because they are
+specific to an individual and cannot be inferred from general
+knowledge. Insights score highest because they are, by definition,
+novel connections -- low-probability given the existing corpus.
+
 Content scoring below a configurable threshold (default: 0.7) is not
-persisted. This is the information-theoretic filter: high-entropy
-(surprising, novel) content is retained; low-entropy (predictable,
-routine) content is discarded. The result is memory that becomes denser
-and more valuable over time, rather than growing without bound.
+persisted. The result is memory that becomes denser and more valuable
+over time, rather than growing without bound. Future work will
+replace or augment the heuristic signal classifier with direct
+conditional entropy estimation, using language model perplexity as
+the scoring function.
 
 ---
 
@@ -987,6 +1065,33 @@ insufficient for semantic understanding.
 [14] J. F. Nash, "Non-Cooperative Games," *Annals of Mathematics*,
 vol. 54, no. 2, pp. 286-295, 1951. Nash equilibrium -- the
 foundation for analysing stable strategies in multi-agent systems.
+
+[15] S. Kullback and R. A. Leibler, "On Information and Sufficiency,"
+*Annals of Mathematical Statistics*, vol. 22, no. 1, pp. 79-86,
+1951. KL divergence as a measure of distributional distance.
+
+[16] M. Minsky, "A Framework for Representing Knowledge," MIT-AI
+Laboratory Memo 306, June 1974. Frames as structured knowledge
+representations that shape interpretation of new information.
+
+[17] J. Sweller, "Cognitive Load During Problem Solving: Effects on
+Learning," *Cognitive Science*, vol. 12, no. 2, pp. 257-285, 1988.
+Schema acquisition reduces cognitive load by organising knowledge
+into retrievable structures.
+
+[18] G. Lakoff and M. Johnson, *Metaphors We Live By*, University of
+Chicago Press, 1980. Conceptual metaphors as constitutive reasoning
+infrastructure, not decorative language.
+
+[19] A. N. Kolmogorov, "Three Approaches to the Quantitative
+Definition of Information," *Problems of Information Transmission*,
+vol. 1, no. 1, pp. 1-7, 1965. Algorithmic complexity as the minimum
+description length of an object.
+
+[20] C. E. Shannon, "Coding Theorems for a Discrete Source with a
+Fidelity Criterion," in *IRE National Convention Record*, Part 4,
+pp. 142-163, 1959. Rate-distortion theory -- the minimum bits
+required to represent a source at a given fidelity.
 
 ---
 

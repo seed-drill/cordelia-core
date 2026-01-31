@@ -439,6 +439,18 @@ impl cordelia_storage::Storage for StorageClone {
     ) -> cordelia_storage::Result<Option<cordelia_storage::GroupMemberRow>> {
         self.0.get_membership(group_id, entity_id)
     }
+    fn add_member(&self, group_id: &str, entity_id: &str, role: &str) -> cordelia_storage::Result<()> {
+        self.0.add_member(group_id, entity_id, role)
+    }
+    fn remove_member(&self, group_id: &str, entity_id: &str) -> cordelia_storage::Result<bool> {
+        self.0.remove_member(group_id, entity_id)
+    }
+    fn update_member_posture(&self, group_id: &str, entity_id: &str, posture: &str) -> cordelia_storage::Result<bool> {
+        self.0.update_member_posture(group_id, entity_id, posture)
+    }
+    fn delete_group(&self, id: &str) -> cordelia_storage::Result<bool> {
+        self.0.delete_group(id)
+    }
     fn log_access(&self, entry: &cordelia_storage::AccessLogEntry) -> cordelia_storage::Result<()> {
         self.0.log_access(entry)
     }

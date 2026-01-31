@@ -53,6 +53,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/groups/list", post(groups_list))
         .route("/api/v1/groups/read", post(groups_read))
         .route("/api/v1/groups/items", post(groups_items))
+        .route("/api/v1/groups/delete", post(groups_delete))
+        .route("/api/v1/groups/add_member", post(groups_add_member))
+        .route("/api/v1/groups/remove_member", post(groups_remove_member))
+        .route("/api/v1/groups/update_posture", post(groups_update_posture))
         .route("/api/v1/status", post(status))
         .route("/api/v1/peers", post(peers))
         .with_state(state)
@@ -144,6 +148,8 @@ pub struct L2SearchRequest {
     pub query: String,
     #[serde(default = "default_limit")]
     pub limit: u32,
+    /// Optional group_id filter: only return items belonging to this group.
+    pub group_id: Option<String>,
 }
 
 fn default_limit() -> u32 {
@@ -171,6 +177,36 @@ pub struct GroupCreateRequest {
     pub culture: String,
     #[serde(default = "default_security_policy")]
     pub security_policy: String,
+}
+
+#[derive(Deserialize)]
+pub struct GroupDeleteRequest {
+    pub group_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct GroupAddMemberRequest {
+    pub group_id: String,
+    pub entity_id: String,
+    #[serde(default = "default_member_role")]
+    pub role: String,
+}
+
+fn default_member_role() -> String {
+    "member".into()
+}
+
+#[derive(Deserialize)]
+pub struct GroupRemoveMemberRequest {
+    pub group_id: String,
+    pub entity_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct GroupUpdatePostureRequest {
+    pub group_id: String,
+    pub entity_id: String,
+    pub posture: String,
 }
 
 fn default_culture() -> String {
@@ -349,8 +385,28 @@ async fn l2_search(
         return e.into_response();
     }
 
-    match state.storage.fts_search(&req.query, req.limit) {
-        Ok(ids) => Json(serde_json::json!({ "results": ids })).into_response(),
+    // Fetch more results if group_id filter is active (post-filter needs headroom)
+    let fetch_limit = if req.group_id.is_some() { req.limit * 4 } else { req.limit };
+
+    match state.storage.fts_search(&req.query, fetch_limit) {
+        Ok(ids) => {
+            let filtered = if let Some(ref group_id) = req.group_id {
+                // Post-filter: only return items belonging to the requested group
+                ids.into_iter()
+                    .filter(|id| {
+                        state.storage.read_l2_item_meta(id)
+                            .ok()
+                            .flatten()
+                            .map(|m| m.group_id.as_deref() == Some(group_id))
+                            .unwrap_or(false)
+                    })
+                    .take(req.limit as usize)
+                    .collect::<Vec<_>>()
+            } else {
+                ids
+            };
+            Json(serde_json::json!({ "results": filtered })).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -440,6 +496,132 @@ async fn groups_items(
         .list_group_items(&req.group_id, req.since.as_deref(), req.limit)
     {
         Ok(items) => Json(serde_json::json!({ "items": items })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn groups_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<GroupDeleteRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    match state.storage.delete_group(&req.group_id) {
+        Ok(true) => {
+            // Remove from shared dynamic groups
+            if let Some(shared) = &state.shared_groups {
+                let mut groups = shared.write().await;
+                groups.retain(|g| g != &req.group_id);
+            }
+
+            // Log access
+            let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
+                entity_id: state.entity_id.clone(),
+                action: "delete_group".into(),
+                resource_type: "group".into(),
+                resource_id: Some(req.group_id.clone()),
+                group_id: Some(req.group_id),
+                detail: None,
+            });
+
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "group not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn groups_add_member(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<GroupAddMemberRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    // Validate role
+    match req.role.as_str() {
+        "owner" | "admin" | "member" | "viewer" => {}
+        _ => return (StatusCode::BAD_REQUEST, "invalid role: must be owner, admin, member, or viewer").into_response(),
+    }
+
+    match state.storage.add_member(&req.group_id, &req.entity_id, &req.role) {
+        Ok(()) => {
+            let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
+                entity_id: state.entity_id.clone(),
+                action: "add_member".into(),
+                resource_type: "group".into(),
+                resource_id: Some(req.group_id.clone()),
+                group_id: Some(req.group_id),
+                detail: Some(format!("entity={} role={}", req.entity_id, req.role)),
+            });
+
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn groups_remove_member(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<GroupRemoveMemberRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    match state.storage.remove_member(&req.group_id, &req.entity_id) {
+        Ok(true) => {
+            let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
+                entity_id: state.entity_id.clone(),
+                action: "remove_member".into(),
+                resource_type: "group".into(),
+                resource_id: Some(req.group_id.clone()),
+                group_id: Some(req.group_id),
+                detail: Some(format!("entity={}", req.entity_id)),
+            });
+
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "member not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn groups_update_posture(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<GroupUpdatePostureRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    // Validate posture
+    match req.posture.as_str() {
+        "active" | "silent" | "emcon" => {}
+        _ => return (StatusCode::BAD_REQUEST, "invalid posture: must be active, silent, or emcon").into_response(),
+    }
+
+    match state.storage.update_member_posture(&req.group_id, &req.entity_id, &req.posture) {
+        Ok(true) => {
+            let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
+                entity_id: state.entity_id.clone(),
+                action: "update_posture".into(),
+                resource_type: "group".into(),
+                resource_id: Some(req.group_id.clone()),
+                group_id: Some(req.group_id),
+                detail: Some(format!("entity={} posture={}", req.entity_id, req.posture)),
+            });
+
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "member not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
