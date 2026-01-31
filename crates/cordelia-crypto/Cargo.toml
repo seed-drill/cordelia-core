@@ -1,0 +1,20 @@
+[package]
+name = "cordelia-crypto"
+version = "0.1.0"
+edition = "2021"
+description = "AES-256-GCM encryption and Ed25519 identity for Cordelia"
+
+[dependencies]
+ring = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+scrypt = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = "3"

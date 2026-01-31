@@ -1,0 +1,17 @@
+[package]
+name = "cordelia-governor"
+version = "0.1.0"
+edition = "2021"
+description = "Peer state machine and governor for Cordelia P2P"
+
+[dependencies]
+cordelia-protocol = { workspace = true }
+tokio = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

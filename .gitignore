@@ -1,0 +1,22 @@
+# Build artifacts
+target/
+*.so
+*.dylib
+*.dll
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Security -- never commit secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json

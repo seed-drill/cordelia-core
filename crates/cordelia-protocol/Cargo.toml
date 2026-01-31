@@ -1,0 +1,23 @@
+[package]
+name = "cordelia-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Wire protocol and message types for Cordelia P2P"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+tokio-util = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }
+rcgen = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+proptest = { workspace = true }
+ring = { workspace = true }

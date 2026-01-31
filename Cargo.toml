@@ -1,0 +1,87 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cordelia-node",
+    "crates/cordelia-protocol",
+    "crates/cordelia-governor",
+    "crates/cordelia-replication",
+    "crates/cordelia-storage",
+    "crates/cordelia-crypto",
+    "crates/cordelia-api",
+]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# QUIC transport
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.13"
+
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Codec framing
+bytes = "1"
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# Randomisation
+rand = "0.8"
+
+# SQLite
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Crypto
+ring = "0.17"
+
+# HTTP API
+axum = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tower = "0.5"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Config
+toml = "0.8"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Testing
+proptest = "1"
+
+# Hex encoding
+hex = "0.4"
+
+# Base64
+base64 = "0.22"
+
+# SHA-256
+sha2 = "0.10"
+
+# Testing
+tempfile = "3"
+
+# scrypt
+scrypt = "0.11"
+
+# Internal crates
+cordelia-protocol = { path = "crates/cordelia-protocol" }
+cordelia-governor = { path = "crates/cordelia-governor" }
+cordelia-replication = { path = "crates/cordelia-replication" }
+cordelia-storage = { path = "crates/cordelia-storage" }
+cordelia-crypto = { path = "crates/cordelia-crypto" }
+cordelia-api = { path = "crates/cordelia-api" }

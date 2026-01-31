@@ -1,0 +1,22 @@
+[package]
+name = "cordelia-replication"
+version = "0.1.0"
+edition = "2021"
+description = "Culture-aware replication engine for Cordelia P2P"
+
+[dependencies]
+cordelia-protocol = { workspace = true }
+cordelia-governor = { workspace = true }
+cordelia-storage = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = "3"
