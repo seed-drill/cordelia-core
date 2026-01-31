@@ -66,9 +66,8 @@ listen_addr = "0.0.0.0:9474"
 [[network.bootnodes]]
 addr = "boot1.cordelia.seeddrill.io:9474"
 
-# Add more bootnodes as they come online:
-# [[network.bootnodes]]
-# addr = "boot2.cordelia.seeddrill.io:9474"
+[[network.bootnodes]]
+addr = "boot2.cordelia.seeddrill.io:9474"
 
 [governor]
 hot_min = 2

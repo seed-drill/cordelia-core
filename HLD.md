@@ -1,6 +1,6 @@
 # Cordelia - High Level Design
 
-*For Martin. For Russell. For not stepping on each other.*
+**Version 1.0 -- Seed Drill (https://seeddrill.ai)**
 
 ---
 

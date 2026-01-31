@@ -47,7 +47,7 @@ unconnected, disposable.
 The human parallel is instructive. Human cognition depends on memory at
 every level: working memory for the current task, episodic memory for
 recent events, semantic memory for accumulated knowledge, procedural
-memory for learned skills. Remove any layer and function degrades
+memory for learned skills [6]. Remove any layer and function degrades
 catastrophically. Current AI agents operate with working memory only.
 
 ### 1.2 Why Not Just a Database?
@@ -681,7 +681,7 @@ three mechanisms to ensure memory quality increases over time.
 
 ### 7.1 Novelty Filtering (Write Path)
 
-The novelty engine (Section 2.3) gates persistence. Low-novelty content
+The novelty engine (Section 2.4) gates persistence. Low-novelty content
 never enters the system. This is input filtering: controlling what gets
 written.
 
@@ -761,6 +761,11 @@ incentivised to validate honestly because the cost of dishonesty
 incentivised to share accurately because the cost of dishonesty
 (reduced trust, reduced access to group knowledge) exceeds the benefit.
 
+Banks [9] illustrates this dynamic in fiction: the Culture is a
+civilisation of autonomous agents with unequal capabilities that
+cooperate without central authority, using shared values rather than
+coercion. Cordelia's group model formalises the same structure.
+
 A second-order effect strengthens this equilibrium: **cooperative
 amplification**. When entities share frame memory (conceptual
 references, reasoning patterns, shared metaphors) alongside data
@@ -817,7 +822,7 @@ is and what it was working on.
 
 - L1/L2 memory with novelty filtering and session continuity
 - AES-256-GCM encryption (plaintext never at rest)
-- MCP proxy with 25 tools, 187 tests
+- MCP proxy with 25 tools and comprehensive test suite
 - Two-node P2P network (QUIC, TLS 1.3, 5 mini-protocols)
 - Governor peer lifecycle (cold/warm/hot/banned, churn rotation)
 - SQLite storage with FTS5 search
@@ -900,7 +905,11 @@ tested, and measured.
 ### 11.2 Our Position
 
 We follow Dennett [7] in treating consciousness as a narrative
-self-model rather than a metaphysical property. On this view, an
+self-model rather than a metaphysical property. Minsky's Society of
+Mind [8] provides a complementary perspective: intelligence emerges
+from the interaction of many simple agents, none of which is
+individually intelligent -- a model that maps directly onto
+Cordelia's multi-agent memory sharing. On this view, an
 entity that maintains a persistent narrative of its own history,
 preferences, and relationships -- and uses that narrative to guide
 future behaviour -- is exhibiting the functional properties that
@@ -1109,7 +1118,7 @@ companion documents:
 | **ARCHITECTURE.md** | Target state architecture, deployment models, federation. Where it is going. | Architects, investors |
 | **NETWORK-MODEL.md** | Wire protocol detail, message formats, state machines. | Protocol implementors |
 | **SPEC.md** | Formal protocol specification. | Protocol implementors |
-| **docs/design/** | Deep dives: game theory, cache model, enrollment flow. | Researchers |
+| **docs/design/** | Deep dives: game theory, group model, decentralisation pivot. | Researchers |
 
 ---
 

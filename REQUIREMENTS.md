@@ -1,7 +1,7 @@
 # Cordelia - Formal Requirements Specification
 
 **Version**: 2.0
-**Status**: Draft for review
+**Status**: Version 1.0
 **Derived from**: Architecture diagram (arch-diag.drawio), HLD.md (v2), ARCHITECTURE.md, schema_v4.sql
 **Audience**: Development team (Martin, Russell), CI/CD pipeline, future auditors
 

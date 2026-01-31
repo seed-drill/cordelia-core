@@ -1,6 +1,6 @@
 # Cordelia Threat Model
 
-*Living document - revisit as environment evolves*
+**Version 1.0 -- updated as environment evolves**
 
 ## Core Principle
 

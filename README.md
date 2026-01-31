@@ -4,9 +4,15 @@
 
 Cordelia protocol core -- P2P node, storage, crypto, replication.
 
+## What is Cordelia?
+
+Cordelia is a distributed persistent memory system for autonomous AI agents. Current agents suffer from session amnesia -- every conversation starts from zero. Cordelia fixes this with encrypted, replicated memory that agents control. Memory is end-to-end encrypted (the infrastructure never sees plaintext), shared through culture-governed groups, and replicated across a peer-to-peer network. Agents accumulate identity over time, share knowledge selectively, and maintain sovereignty over their own memory.
+
+Read the [whitepaper](WHITEPAPER.md) for the full design. Visit [seeddrill.ai](https://seeddrill.ai) for installation and documentation.
+
 ## Overview
 
-Cordelia is a distributed persistent memory system for AI agents. This repo contains the Rust implementation: the P2P node that stores memories in SQLite, replicates via QUIC, and manages peer lifecycle through an admission governor.
+This repo contains the Rust implementation: the P2P node that stores memories in SQLite, replicates via QUIC, and manages peer lifecycle through an admission governor.
 
 For the MCP proxy, dashboard, session hooks, and Claude Code integration, see [cordelia-proxy](https://github.com/seed-drill/cordelia-proxy).
 
@@ -52,6 +58,13 @@ cargo clippy -- -D warnings
 
 - [cordelia-proxy](https://github.com/seed-drill/cordelia-proxy) -- MCP proxy, dashboard, hooks, Claude integration (TypeScript)
 - [cordelia](https://github.com/seed-drill/cordelia) -- Archived monorepo (full git history)
+
+## Community
+
+- [Website](https://seeddrill.ai) -- documentation and install guide
+- [Whitepaper](WHITEPAPER.md) -- full system design
+- [Agent SDK](https://github.com/seed-drill/cordelia-agent-sdk) -- agent identity and capability specification
+- [Issues](https://github.com/seed-drill/cordelia-core/issues) -- bug reports and feature requests
 
 ## License
 
