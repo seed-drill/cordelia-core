@@ -156,6 +156,11 @@ impl ReplicationEngine {
     pub fn max_batch_size(&self) -> u32 {
         self.config.max_batch_size
     }
+
+    /// Access the replication config.
+    pub fn config(&self) -> &ReplicationConfig {
+        &self.config
+    }
 }
 
 #[cfg(test)]

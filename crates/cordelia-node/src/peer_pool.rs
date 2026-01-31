@@ -18,7 +18,7 @@ pub struct PeerHandle {
     pub groups: Vec<GroupId>,
     pub group_intersection: Vec<GroupId>,
     /// Negotiated protocol version from handshake.
-    #[allow(dead_code)]
+    /// Used for future version-specific message handling (R3-022).
     pub protocol_version: u16,
 }
 
@@ -191,6 +191,7 @@ impl PeerPool {
                     rtt_ms: Some(rtt.as_secs_f64() * 1000.0),
                     items_delivered: 0, // TODO: track this per-connection
                     groups: h.groups.clone(),
+                    protocol_version: h.protocol_version,
                 }
             })
             .collect()

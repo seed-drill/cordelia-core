@@ -212,6 +212,15 @@ impl Governor {
         }
     }
 
+    /// Mark a dial attempt as failed for backoff tracking.
+    /// Unlike mark_disconnected, works on Cold peers (pre-connection failures).
+    pub fn mark_dial_failed(&mut self, node_id: &NodeId) {
+        if let Some(peer) = self.peers.get_mut(node_id) {
+            peer.disconnect_count += 1;
+            peer.last_disconnected = Some(Instant::now());
+        }
+    }
+
     /// Backoff duration for a peer based on disconnect count.
     /// Exponential: min(2^count * 30s, 15min). Zero if never disconnected.
     fn reconnect_backoff(disconnect_count: u32) -> Duration {

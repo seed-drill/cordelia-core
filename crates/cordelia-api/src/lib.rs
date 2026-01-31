@@ -41,6 +41,7 @@ pub struct PeerDetail {
     pub rtt_ms: Option<f64>,
     pub items_delivered: u64,
     pub groups: Vec<String>,
+    pub protocol_version: u16,
 }
 
 /// Callback to get peer list from the node's peer pool.

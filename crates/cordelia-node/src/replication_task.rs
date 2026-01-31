@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use cordelia_api::WriteNotification;
 use cordelia_protocol::messages::FetchedItem;
-use cordelia_replication::{GroupCulture, ReplicationConfig, ReplicationEngine};
+use cordelia_replication::{GroupCulture, ReplicationEngine};
 use cordelia_storage::Storage;
 use tokio::sync::broadcast;
 
@@ -24,10 +24,8 @@ pub async fn run_replication_loop(
     mut write_rx: broadcast::Receiver<WriteNotification>,
     mut shutdown: broadcast::Receiver<()>,
 ) {
-    let config = ReplicationConfig::default();
-
-    // Anti-entropy sync interval (use moderate default)
-    let sync_interval = std::time::Duration::from_secs(config.sync_interval_moderate_secs);
+    // Anti-entropy sync interval (from node config via engine)
+    let sync_interval = std::time::Duration::from_secs(engine.config().sync_interval_moderate_secs);
     let mut sync_timer = tokio::time::interval(sync_interval);
     sync_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Skip the first immediate tick

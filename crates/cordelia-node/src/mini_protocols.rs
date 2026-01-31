@@ -589,8 +589,9 @@ pub async fn handle_memory_push(
 pub async fn handle_group_exchange(
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
-    _pool: &PeerPool,
+    pool: &PeerPool,
     our_groups: &[String],
+    peer_node_id: &NodeId,
 ) -> Result<(), BoxError> {
     let msg = read_message(&mut recv).await?;
 
@@ -602,13 +603,21 @@ pub async fn handle_group_exchange(
             });
             write_message(&mut send, &resp).await?;
 
-            // Find the peer by connection and update their groups
-            // We need the node_id -- extract from pool by scanning for matching connection
-            // For now, log the exchange; the caller handles pool update
-            tracing::debug!(
-                peer_groups = ?exchange.groups,
-                "received group exchange"
-            );
+            // Update peer's groups and recompute intersection
+            let old_handle = pool.get(peer_node_id).await;
+            pool.update_peer_groups(peer_node_id, exchange.groups.clone()).await;
+            let new_handle = pool.get(peer_node_id).await;
+
+            if let (Some(old), Some(new)) = (old_handle, new_handle) {
+                if old.group_intersection != new.group_intersection {
+                    tracing::info!(
+                        peer = hex::encode(peer_node_id),
+                        old = ?old.group_intersection,
+                        new = ?new.group_intersection,
+                        "group intersection updated (inbound exchange)"
+                    );
+                }
+            }
         }
         _ => {
             tracing::debug!("unexpected message in group-exchange stream");

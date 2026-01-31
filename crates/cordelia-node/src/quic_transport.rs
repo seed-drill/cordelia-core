@@ -170,6 +170,7 @@ pub async fn run_connection(
                 let pool = pool.clone();
                 let storage = storage.clone();
                 let our_groups = our_groups.clone();
+                let peer_id = resolved_peer_id;
                 tokio::spawn(async move {
                     // Read protocol byte
                     let mut proto_buf = [0u8; 1];
@@ -226,6 +227,7 @@ pub async fn run_connection(
                                 recv,
                                 &pool,
                                 &our_groups,
+                                &peer_id,
                             )
                             .await
                             {

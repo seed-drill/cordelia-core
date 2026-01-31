@@ -35,28 +35,18 @@ pub async fn run_governor_loop(
     }
 
     // Seed bootnodes as cold peers (resolve DNS hostnames to IPs)
+    let mut unresolved_bootnodes: Vec<BootnodeEntry> = Vec::new();
     {
         let mut gov = governor.lock().await;
         for boot in &bootnodes {
-            // Try direct SocketAddr parse first, then DNS resolution
-            let addr = boot.addr.parse::<SocketAddr>().ok().or_else(|| {
-                boot.addr
-                    .to_socket_addrs()
-                    .ok()
-                    .and_then(|mut addrs| addrs.next())
-            });
-
-            if let Some(addr) = addr {
-                let mut id = [0u8; 32];
-                let addr_bytes = addr.to_string();
-                let hash = cordelia_crypto::sha256_hex(addr_bytes.as_bytes());
-                let hash_bytes = hex::decode(&hash).unwrap_or_default();
-                let len = id.len().min(hash_bytes.len());
-                id[..len].copy_from_slice(&hash_bytes[..len]);
-                gov.add_peer(id, vec![addr], vec![]);
-                tracing::info!(bootnode = &boot.addr, resolved = %addr, "seeded bootnode");
-            } else {
-                tracing::warn!(bootnode = &boot.addr, "failed to resolve bootnode address");
+            match resolve_bootnode(boot) {
+                Some(addr) => {
+                    seed_bootnode(&mut gov, &boot.addr, addr);
+                }
+                None => {
+                    tracing::warn!(bootnode = &boot.addr, "failed to resolve bootnode address");
+                    unresolved_bootnodes.push(boot.clone());
+                }
             }
         }
     }
@@ -65,6 +55,8 @@ pub async fn run_governor_loop(
     let mut tick_count: u64 = 0;
     // Exchange groups every 6 ticks (60s at 10s tick interval)
     const GROUP_EXCHANGE_EVERY: u64 = 6;
+    // Retry unresolved bootnodes every 30 ticks (5 minutes)
+    const BOOTNODE_RETRY_EVERY: u64 = 30;
 
     loop {
         tokio::select! {
@@ -122,6 +114,14 @@ pub async fn run_governor_loop(
                             .await
                             {
                                 Ok(peer_id) => {
+                                    // Immediate group exchange after handshake (R3-024 fix)
+                                    if let Ok(fresh_groups) = crate::mini_protocols::request_group_exchange(
+                                        &conn,
+                                        &our_groups,
+                                    ).await {
+                                        pool.update_peer_groups(&peer_id, fresh_groups).await;
+                                    }
+
                                     // Get the peer's advertised groups from the pool
                                     let peer_groups = pool
                                         .get(&peer_id)
@@ -185,6 +185,10 @@ pub async fn run_governor_loop(
                             }
                         }
                         Err(e) => {
+                            // Track dial failure for exponential backoff
+                            let mut gov = governor.lock().await;
+                            gov.mark_dial_failed(&node_id);
+                            drop(gov);
                             tracing::warn!(addr = %addr, "dial failed: {e}");
                         }
                     }
@@ -195,8 +199,26 @@ pub async fn run_governor_loop(
         let (warm, hot) = pool.peer_count_by_state().await;
         tracing::debug!(warm, hot, tick = tick_count, "governor tick complete");
 
-        // Periodic group exchange with hot peers
+        // Retry unresolved bootnodes periodically
         tick_count += 1;
+        if !unresolved_bootnodes.is_empty() && tick_count.is_multiple_of(BOOTNODE_RETRY_EVERY) {
+            let mut gov = governor.lock().await;
+            unresolved_bootnodes.retain(|boot| {
+                match resolve_bootnode(boot) {
+                    Some(addr) => {
+                        seed_bootnode(&mut gov, &boot.addr, addr);
+                        tracing::info!(bootnode = &boot.addr, resolved = %addr, "resolved previously unresolved bootnode");
+                        false // remove from unresolved list
+                    }
+                    None => {
+                        tracing::debug!(bootnode = &boot.addr, "bootnode still unresolvable");
+                        true // keep in unresolved list
+                    }
+                }
+            });
+        }
+
+        // Periodic group exchange with hot peers
         if tick_count.is_multiple_of(GROUP_EXCHANGE_EVERY) {
             let hot_peers = pool.active_peers().await;
             let groups = our_groups.clone();
@@ -233,4 +255,26 @@ pub async fn run_governor_loop(
             }
         }
     }
+}
+
+/// Try to resolve a bootnode address to a SocketAddr.
+fn resolve_bootnode(boot: &BootnodeEntry) -> Option<SocketAddr> {
+    boot.addr.parse::<SocketAddr>().ok().or_else(|| {
+        boot.addr
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+    })
+}
+
+/// Seed a resolved bootnode into the governor as a cold peer.
+fn seed_bootnode(gov: &mut Governor, bootnode_addr: &str, addr: SocketAddr) {
+    let mut id = [0u8; 32];
+    let addr_bytes = addr.to_string();
+    let hash = cordelia_crypto::sha256_hex(addr_bytes.as_bytes());
+    let hash_bytes = hex::decode(&hash).unwrap_or_default();
+    let len = id.len().min(hash_bytes.len());
+    id[..len].copy_from_slice(&hash_bytes[..len]);
+    gov.add_peer(id, vec![addr], vec![]);
+    tracing::info!(bootnode = bootnode_addr, resolved = %addr, "seeded bootnode");
 }
