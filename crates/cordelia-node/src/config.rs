@@ -2,7 +2,48 @@
 //! Parsed from ~/.cordelia/config.toml.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
+
+/// Node role determines dial policy and gossip visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRole {
+    /// Infrastructure relay: appears in gossip, dials all peers.
+    Relay,
+    /// Personal node (default): hidden from gossip, dials relays/bootnodes only.
+    Personal,
+    /// High-security keeper: hidden from gossip, dials only trusted relays.
+    Keeper,
+}
+
+impl NodeRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NodeRole::Relay => "relay",
+            NodeRole::Personal => "personal",
+            NodeRole::Keeper => "keeper",
+        }
+    }
+}
+
+impl fmt::Display for NodeRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for NodeRole {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "relay" => Ok(NodeRole::Relay),
+            "personal" => Ok(NodeRole::Personal),
+            "keeper" => Ok(NodeRole::Keeper),
+            other => Err(format!("unknown node role: {other}")),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
@@ -27,6 +68,9 @@ pub struct NodeSection {
     pub database: String,
     #[serde(default = "default_entity_id")]
     pub entity_id: String,
+    /// Node role: "relay", "personal" (default), or "keeper".
+    #[serde(default = "default_role")]
+    pub role: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -35,6 +79,9 @@ pub struct NetworkSection {
     pub listen_addr: String,
     #[serde(default)]
     pub bootnodes: Vec<BootnodeEntry>,
+    /// Keeper-only: explicit relay allowlist. Ignored for other roles.
+    #[serde(default)]
+    pub trusted_relays: Vec<BootnodeEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +193,9 @@ fn default_7() -> u32 {
 fn default_batch() -> u32 {
     100
 }
+fn default_role() -> String {
+    "personal".into()
+}
 
 impl NodeConfig {
     /// Load config from file, or create default if missing.
@@ -157,6 +207,34 @@ impl NodeConfig {
         } else {
             Ok(Self::default())
         }
+    }
+
+    /// Parse the configured node role.
+    pub fn role(&self) -> NodeRole {
+        self.node.role.parse().unwrap_or(NodeRole::Personal)
+    }
+
+    /// Governor targets capped by role.
+    /// Personal: hot 2-5, warm 5-10. Keeper: hot 1-3, warm 2-5.
+    /// Relay: use config values as-is.
+    pub fn effective_governor_targets(&self) -> GovernorSection {
+        let mut g = self.governor.clone();
+        match self.role() {
+            NodeRole::Personal => {
+                g.hot_min = g.hot_min.min(2);
+                g.hot_max = g.hot_max.min(5);
+                g.warm_min = g.warm_min.min(5);
+                g.warm_max = g.warm_max.min(10);
+            }
+            NodeRole::Keeper => {
+                g.hot_min = g.hot_min.min(1);
+                g.hot_max = g.hot_max.min(3);
+                g.warm_min = g.warm_min.min(2);
+                g.warm_max = g.warm_max.min(5);
+            }
+            NodeRole::Relay => {} // use config values
+        }
+        g
     }
 }
 
@@ -170,6 +248,7 @@ impl Default for NodeConfig {
                 api_addr: None,
                 database: default_database(),
                 entity_id: default_entity_id(),
+                role: default_role(),
             },
             network: NetworkSection::default(),
             governor: GovernorSection::default(),
@@ -228,6 +307,77 @@ tombstone_retention_days = 7
             "russell.cordelia.seeddrill.io:9474"
         );
         assert_eq!(cfg.governor.hot_min, 2);
+    }
+
+    #[test]
+    fn test_default_role_is_personal() {
+        let cfg = NodeConfig::default();
+        assert_eq!(cfg.role(), NodeRole::Personal);
+        assert_eq!(cfg.node.role, "personal");
+    }
+
+    #[test]
+    fn test_parse_relay_role() {
+        let toml_str = r#"
+[node]
+identity_key = "~/.cordelia/node.key"
+api_transport = "http"
+api_addr = "127.0.0.1:9473"
+database = "~/cordelia/memory/cordelia.db"
+entity_id = "boot1"
+role = "relay"
+
+[network]
+listen_addr = "0.0.0.0:9474"
+"#;
+        let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.role(), NodeRole::Relay);
+    }
+
+    #[test]
+    fn test_parse_keeper_with_trusted_relays() {
+        let toml_str = r#"
+[node]
+identity_key = "~/.cordelia/node.key"
+api_transport = "http"
+api_addr = "127.0.0.1:9473"
+database = "~/cordelia/memory/cordelia.db"
+entity_id = "vault"
+role = "keeper"
+
+[network]
+listen_addr = "0.0.0.0:9474"
+
+[[network.trusted_relays]]
+addr = "boot1.cordelia.seeddrill.io:9474"
+
+[[network.trusted_relays]]
+addr = "boot2.cordelia.seeddrill.io:9474"
+"#;
+        let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.role(), NodeRole::Keeper);
+        assert_eq!(cfg.network.trusted_relays.len(), 2);
+    }
+
+    #[test]
+    fn test_effective_governor_targets_personal() {
+        let cfg = NodeConfig::default(); // personal
+        let eff = cfg.effective_governor_targets();
+        assert!(eff.hot_max <= 5, "personal hot_max should be capped at 5");
+        assert!(eff.warm_max <= 10, "personal warm_max should be capped at 10");
+    }
+
+    #[test]
+    fn test_effective_governor_targets_relay() {
+        let toml_str = r#"
+[node]
+role = "relay"
+"#;
+        let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
+        let eff = cfg.effective_governor_targets();
+        // Relay uses config defaults (20, 50)
+        assert_eq!(eff.hot_max, 20);
+        assert_eq!(eff.warm_max, 50);
     }
 
     #[test]

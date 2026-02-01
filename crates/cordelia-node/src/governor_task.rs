@@ -27,6 +27,7 @@ pub async fn run_governor_loop(
     bootnodes: Vec<BootnodeEntry>,
     our_node_id: [u8; 32],
     our_groups: Vec<String>,
+    our_role: String,
     mut shutdown: broadcast::Receiver<()>,
     shutdown_tx: broadcast::Sender<()>,
 ) {
@@ -101,6 +102,7 @@ pub async fn run_governor_loop(
                 let governor = governor.clone();
                 let storage = storage.clone();
                 let our_groups = our_groups.clone();
+                let our_role = our_role.clone();
 
                 tokio::spawn(async move {
                     match transport.dial(addr).await {
@@ -134,14 +136,28 @@ pub async fn run_governor_loop(
 
                                     let mut gov = governor.lock().await;
                                     // Replace fake bootnode ID with real handshake ID
+                                    // relay flag is preserved by replace_node_id
+                                    let was_relay = gov
+                                        .peer_info(&node_id)
+                                        .map(|p| p.is_relay)
+                                        .unwrap_or(false);
                                     if node_id != peer_id {
                                         gov.replace_node_id(&node_id, peer_id, peer_groups.clone());
                                     } else {
                                         // Update groups even if ID matches
                                         gov.add_peer(peer_id, vec![addr], peer_groups);
+                                        // Preserve relay flag for bootnodes
+                                        if was_relay {
+                                            gov.set_peer_relay(&peer_id, true);
+                                        }
                                     }
                                     gov.mark_connected(&peer_id);
                                     drop(gov);
+
+                                    // Mark as relay in pool too
+                                    if was_relay {
+                                        pool.set_relay(&peer_id, true).await;
+                                    }
 
                                     tracing::info!(
                                         peer = hex::encode(peer_id),
@@ -167,6 +183,7 @@ pub async fn run_governor_loop(
                                     let pool2 = pool.clone();
                                     let storage2 = storage.clone();
                                     let groups2 = our_groups.clone();
+                                    let role2 = our_role.clone();
                                     let gov2 = governor.clone();
                                     tokio::spawn(async move {
                                         crate::quic_transport::run_connection(
@@ -176,6 +193,7 @@ pub async fn run_governor_loop(
                                             storage2,
                                             our_node_id,
                                             groups2,
+                                            role2,
                                             Some(gov2),
                                             false,
                                         )
@@ -270,7 +288,7 @@ fn resolve_bootnode(boot: &BootnodeEntry) -> Option<SocketAddr> {
     })
 }
 
-/// Seed a resolved bootnode into the governor as a cold peer.
+/// Seed a resolved bootnode into the governor as a cold relay peer.
 fn seed_bootnode(gov: &mut Governor, bootnode_addr: &str, addr: SocketAddr) {
     let mut id = [0u8; 32];
     let addr_bytes = addr.to_string();
@@ -279,5 +297,6 @@ fn seed_bootnode(gov: &mut Governor, bootnode_addr: &str, addr: SocketAddr) {
     let len = id.len().min(hash_bytes.len());
     id[..len].copy_from_slice(&hash_bytes[..len]);
     gov.add_peer(id, vec![addr], vec![]);
-    tracing::info!(bootnode = bootnode_addr, resolved = %addr, "seeded bootnode");
+    gov.set_peer_relay(&id, true);
+    tracing::info!(bootnode = bootnode_addr, resolved = %addr, "seeded bootnode (relay)");
 }

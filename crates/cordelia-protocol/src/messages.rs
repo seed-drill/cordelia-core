@@ -104,6 +104,9 @@ pub struct PeerAddress {
     pub addrs: Vec<SocketAddr>,
     pub last_seen: u64,
     pub groups: Vec<GroupId>,
+    /// Node role: "relay", "personal", or "keeper". Empty = unknown (treat as personal).
+    #[serde(default)]
+    pub role: String,
 }
 
 // ============================================================================

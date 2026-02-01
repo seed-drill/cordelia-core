@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use cordelia_api::AppState;
 use cordelia_crypto::NodeIdentity;
-use cordelia_governor::{Governor, GovernorTargets};
+use cordelia_governor::{DialPolicy, Governor, GovernorTargets};
 use cordelia_replication::{ReplicationConfig, ReplicationEngine};
 use cordelia_storage::SqliteStorage;
 
@@ -161,9 +161,11 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let key_path = expand_tilde(&cfg.node.identity_key);
     let identity = NodeIdentity::load_or_create(&key_path)?;
     let our_node_id = *identity.node_id();
+    let our_role = cfg.role();
     tracing::info!(
         node_id = %identity.node_id_hex(),
         version = env!("CARGO_PKG_VERSION"),
+        role = our_role.as_str(),
         protocol_min = cordelia_protocol::VERSION_MIN,
         protocol_max = cordelia_protocol::VERSION_MAX,
         protocol_magic = format_args!("{:#010x}", cordelia_protocol::PROTOCOL_MAGIC),
@@ -238,19 +240,59 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         })),
     });
 
-    // Build governor
+    // Build governor with role-based targets and dial policy
+    let effective_gov = cfg.effective_governor_targets();
     let governor_targets = GovernorTargets {
-        hot_min: cfg.governor.hot_min,
-        hot_max: cfg.governor.hot_max,
-        warm_min: cfg.governor.warm_min,
-        warm_max: cfg.governor.warm_max,
-        cold_max: cfg.governor.cold_max,
-        churn_interval_secs: cfg.governor.churn_interval_secs,
-        churn_fraction: cfg.governor.churn_fraction,
+        hot_min: effective_gov.hot_min,
+        hot_max: effective_gov.hot_max,
+        warm_min: effective_gov.warm_min,
+        warm_max: effective_gov.warm_max,
+        cold_max: effective_gov.cold_max,
+        churn_interval_secs: effective_gov.churn_interval_secs,
+        churn_fraction: effective_gov.churn_fraction,
     };
-    let governor = Arc::new(tokio::sync::Mutex::new(Governor::new(
+    let dial_policy = match our_role {
+        config::NodeRole::Relay => DialPolicy::All,
+        config::NodeRole::Personal => DialPolicy::RelaysOnly,
+        config::NodeRole::Keeper => {
+            // Resolve trusted relay addresses to node IDs (hash-based, same as bootnode seeding)
+            let trusted_ids: Vec<[u8; 32]> = cfg
+                .network
+                .trusted_relays
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .addr
+                        .parse::<std::net::SocketAddr>()
+                        .ok()
+                        .or_else(|| {
+                            use std::net::ToSocketAddrs;
+                            entry.addr.to_socket_addrs().ok().and_then(|mut a| a.next())
+                        })
+                        .map(|addr| {
+                            let hash =
+                                cordelia_crypto::sha256_hex(addr.to_string().as_bytes());
+                            let hash_bytes = hex::decode(&hash).unwrap_or_default();
+                            let mut id = [0u8; 32];
+                            let len = id.len().min(hash_bytes.len());
+                            id[..len].copy_from_slice(&hash_bytes[..len]);
+                            id
+                        })
+                })
+                .collect();
+            DialPolicy::TrustedOnly(trusted_ids)
+        }
+    };
+    tracing::info!(
+        role = our_role.as_str(),
+        hot_max = governor_targets.hot_max,
+        warm_max = governor_targets.warm_max,
+        "governor targets (role-adjusted)"
+    );
+    let governor = Arc::new(tokio::sync::Mutex::new(Governor::with_dial_policy(
         governor_targets,
         our_groups.clone(),
+        dial_policy,
     )));
 
     // Build replication engine
@@ -268,11 +310,12 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let pool = pool.clone();
         let storage = storage.clone();
         let groups = our_groups.clone();
+        let role = our_role.as_str().to_string();
         let governor = governor.clone();
         let shutdown = shutdown_tx.subscribe();
         tokio::spawn(async move {
             transport
-                .listen(pool, storage, our_node_id, groups, Some(governor), shutdown)
+                .listen(pool, storage, our_node_id, groups, role, Some(governor), shutdown)
                 .await;
         })
     };
@@ -285,6 +328,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let storage = storage.clone();
         let bootnodes = cfg.network.bootnodes.clone();
         let groups = our_groups.clone();
+        let role = our_role.as_str().to_string();
         let shutdown = shutdown_tx.subscribe();
         let shutdown_tx_clone = shutdown_tx.clone();
         tokio::spawn(async move {
@@ -296,6 +340,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 bootnodes,
                 our_node_id,
                 groups,
+                role,
                 shutdown,
                 shutdown_tx_clone,
             )
@@ -611,7 +656,7 @@ mod tests {
             let shutdown = shutdown_tx_b.subscribe();
             tokio::spawn(async move {
                 transport_b
-                    .listen(pool_b, storage_b, node_id_b, groups_b, None, shutdown)
+                    .listen(pool_b, storage_b, node_id_b, groups_b, "relay".into(), None, shutdown)
                     .await;
             })
         };
@@ -642,6 +687,7 @@ mod tests {
                 storage_a_accept,
                 node_id_a,
                 groups_a_accept,
+                "relay".into(),
                 None,
                 false,
             )
@@ -828,7 +874,7 @@ mod tests {
             let shutdown = shutdown_tx_b.subscribe();
             tokio::spawn(async move {
                 transport_b
-                    .listen(pool_b, storage_b, node_id_b, groups_b, None, shutdown)
+                    .listen(pool_b, storage_b, node_id_b, groups_b, "relay".into(), None, shutdown)
                     .await;
             })
         };
@@ -882,7 +928,8 @@ mod tests {
             let groups_a = our_groups_a.clone();
             tokio::spawn(async move {
                 quic_transport::run_connection(
-                    conn, [0u8; 32], pool_a, storage_a, node_id_a, groups_a, None, false,
+                    conn, [0u8; 32], pool_a, storage_a, node_id_a, groups_a, "relay".into(), None,
+                    false,
                 )
                 .await;
             });

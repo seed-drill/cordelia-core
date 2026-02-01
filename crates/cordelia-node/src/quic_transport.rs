@@ -71,6 +71,7 @@ impl QuicTransport {
         storage: Arc<dyn cordelia_storage::Storage>,
         our_node_id: [u8; 32],
         our_groups: Vec<String>,
+        our_role: String,
         governor: Option<Arc<Mutex<Governor>>>,
         shutdown: broadcast::Receiver<()>,
     ) {
@@ -84,6 +85,7 @@ impl QuicTransport {
                             let pool = pool.clone();
                             let storage = storage.clone();
                             let our_groups = our_groups.clone();
+                            let our_role = our_role.clone();
                             let governor = governor.clone();
                             tokio::spawn(async move {
                                 match incoming.await {
@@ -92,7 +94,7 @@ impl QuicTransport {
                                             remote = %conn.remote_address(),
                                             "accepted inbound connection"
                                         );
-                                        run_connection(conn, [0u8; 32], pool, storage, our_node_id, our_groups, governor, true).await;
+                                        run_connection(conn, [0u8; 32], pool, storage, our_node_id, our_groups, our_role, governor, true).await;
                                     }
                                     Err(e) => {
                                         tracing::warn!("failed to accept connection: {e}");
@@ -126,6 +128,7 @@ pub async fn run_connection(
     storage: Arc<dyn cordelia_storage::Storage>,
     our_node_id: [u8; 32],
     our_groups: Vec<String>,
+    our_role: String,
     governor: Option<Arc<Mutex<Governor>>>,
     inbound: bool,
 ) {
@@ -182,6 +185,7 @@ pub async fn run_connection(
                 let pool = pool.clone();
                 let storage = storage.clone();
                 let our_groups = our_groups.clone();
+                let our_role = our_role.clone();
                 let peer_id = resolved_peer_id;
                 tokio::spawn(async move {
                     // Read protocol byte
@@ -202,7 +206,8 @@ pub async fn run_connection(
                         }
                         PROTO_PEER_SHARE => {
                             if let Err(e) =
-                                mini_protocols::handle_peer_share(send, recv, &pool).await
+                                mini_protocols::handle_peer_share(send, recv, &pool, &our_role)
+                                    .await
                             {
                                 tracing::debug!("peer-share error: {e}");
                             }

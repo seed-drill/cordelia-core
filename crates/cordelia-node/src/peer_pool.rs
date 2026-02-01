@@ -20,6 +20,8 @@ pub struct PeerHandle {
     /// Negotiated protocol version from handshake.
     /// Used for future version-specific message handling (R3-022).
     pub protocol_version: u16,
+    /// Whether this peer advertises itself as a relay.
+    pub is_relay: bool,
 }
 
 /// Thread-safe pool of active peer connections.
@@ -45,6 +47,7 @@ impl PeerPool {
         peer_groups: Vec<GroupId>,
         state: PeerState,
         protocol_version: u16,
+        is_relay: bool,
     ) {
         let group_intersection: Vec<GroupId> = peer_groups
             .iter()
@@ -59,6 +62,7 @@ impl PeerPool {
             groups: peer_groups,
             group_intersection,
             protocol_version,
+            is_relay,
         };
 
         self.inner.write().await.insert(node_id, handle);
@@ -98,6 +102,17 @@ impl PeerPool {
             .collect()
     }
 
+    /// Get only relay peers (for gossip: only share relays in peer-share responses).
+    pub async fn relay_peers(&self) -> Vec<PeerHandle> {
+        self.inner
+            .read()
+            .await
+            .values()
+            .filter(|h| h.state.is_active() && h.is_relay)
+            .cloned()
+            .collect()
+    }
+
     /// Count peers by state.
     pub async fn peer_count_by_state(&self) -> (usize, usize) {
         let pool = self.inner.read().await;
@@ -121,6 +136,13 @@ impl PeerPool {
                 .cloned()
                 .collect();
             handle.groups = groups;
+        }
+    }
+
+    /// Set a peer's relay flag.
+    pub async fn set_relay(&self, node_id: &NodeId, is_relay: bool) {
+        if let Some(handle) = self.inner.write().await.get_mut(node_id) {
+            handle.is_relay = is_relay;
         }
     }
 

@@ -140,13 +140,14 @@ pub async fn handle_inbound_handshake(
     });
     write_message(&mut send, &accept).await?;
 
-    // Register peer in pool
+    // Register peer in pool (relay status unknown at handshake, default false)
     pool.insert(
         propose.node_id,
         conn.clone(),
         propose.groups,
         PeerState::Warm,
         version,
+        false,
     )
     .await;
 
@@ -199,13 +200,14 @@ pub async fn handle_outbound_handshake(
         .into());
     }
 
-    // Register peer in pool
+    // Register peer in pool (relay status unknown at handshake, default false)
     pool.insert(
         accept.node_id,
         conn.clone(),
         accept.groups,
         PeerState::Warm,
         accept.version,
+        false,
     )
     .await;
 
@@ -339,17 +341,25 @@ pub async fn run_keepalive_loop(
 // ============================================================================
 
 /// Handle inbound peer-share request.
+/// `our_role` determines which peers we gossip: relays share all active peers,
+/// personal/keeper nodes only share relay peers (never leak personal nodes).
 pub async fn handle_peer_share(
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
     pool: &PeerPool,
+    our_role: &str,
 ) -> Result<(), BoxError> {
     let msg = read_message(&mut recv).await?;
 
     match msg {
         Message::PeerShareRequest(req) => {
-            let active = pool.active_peers().await;
-            let peers: Vec<PeerAddress> = active
+            // Relays share all active peers; personal/keeper only share relays
+            let shareable = if our_role == "relay" {
+                pool.active_peers().await
+            } else {
+                pool.relay_peers().await
+            };
+            let peers: Vec<PeerAddress> = shareable
                 .iter()
                 .take(req.max_peers as usize)
                 .map(|h| PeerAddress {
@@ -357,6 +367,11 @@ pub async fn handle_peer_share(
                     addrs: vec![h.connection.remote_address()],
                     last_seen: now_ts(),
                     groups: h.groups.clone(),
+                    role: if h.is_relay {
+                        "relay".into()
+                    } else {
+                        String::new()
+                    },
                 })
                 .collect();
 

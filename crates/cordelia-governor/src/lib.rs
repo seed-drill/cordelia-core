@@ -21,6 +21,17 @@ const STALE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// Default ban duration.
 const DEFAULT_BAN_DURATION: Duration = Duration::from_secs(3600);
 
+/// Dial policy controls which peers the governor will attempt to connect to.
+#[derive(Debug, Clone)]
+pub enum DialPolicy {
+    /// Dial any discovered peer (relay behaviour).
+    All,
+    /// Only dial peers marked as relays or bootnodes (personal node behaviour).
+    RelaysOnly,
+    /// Only dial specific trusted relay node IDs (keeper behaviour).
+    TrustedOnly(Vec<NodeId>),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernorTargets {
     pub hot_min: usize,
@@ -90,6 +101,8 @@ pub struct PeerInfo {
     pub demoted_at: Option<Instant>,
     pub disconnect_count: u32,
     pub last_disconnected: Option<Instant>,
+    /// Whether this peer is a relay/bootnode (eligible for dial under restricted policies).
+    pub is_relay: bool,
 }
 
 impl PeerInfo {
@@ -106,6 +119,7 @@ impl PeerInfo {
             demoted_at: None,
             disconnect_count: 0,
             last_disconnected: None,
+            is_relay: false,
         }
     }
 
@@ -135,6 +149,7 @@ pub struct Governor {
     targets: GovernorTargets,
     our_groups: Vec<GroupId>,
     last_churn: Instant,
+    dial_policy: DialPolicy,
 }
 
 /// Actions the governor wants the node to take after a tick.
@@ -150,11 +165,20 @@ pub struct GovernorActions {
 
 impl Governor {
     pub fn new(targets: GovernorTargets, our_groups: Vec<GroupId>) -> Self {
+        Self::with_dial_policy(targets, our_groups, DialPolicy::All)
+    }
+
+    pub fn with_dial_policy(
+        targets: GovernorTargets,
+        our_groups: Vec<GroupId>,
+        dial_policy: DialPolicy,
+    ) -> Self {
         Self {
             peers: HashMap::new(),
             targets,
             our_groups,
             last_churn: Instant::now(),
+            dial_policy,
         }
     }
 
@@ -233,10 +257,13 @@ impl Governor {
 
     /// Replace a peer's node ID (e.g. after handshake reveals real identity).
     /// Moves all peer state from `old` to `new`. Returns true if replaced.
+    /// Replace a peer's node ID (e.g. after handshake reveals real identity).
+    /// Moves all peer state from `old` to `new`, preserving relay flag. Returns true if replaced.
     pub fn replace_node_id(&mut self, old: &NodeId, new: NodeId, groups: Vec<GroupId>) -> bool {
         if let Some(mut peer) = self.peers.remove(old) {
             peer.node_id = new;
             peer.groups = groups;
+            // is_relay is preserved from the old entry (bootnode seeding sets it)
             self.peers.insert(new, peer);
             true
         } else {
@@ -258,6 +285,22 @@ impl Governor {
                 escalation,
             };
             peer.connected_since = None;
+        }
+    }
+
+    /// Mark a peer as a relay node.
+    pub fn set_peer_relay(&mut self, node_id: &NodeId, is_relay: bool) {
+        if let Some(peer) = self.peers.get_mut(node_id) {
+            peer.is_relay = is_relay;
+        }
+    }
+
+    /// Check if a peer is dialable under the current policy.
+    fn is_dialable(&self, peer: &PeerInfo) -> bool {
+        match &self.dial_policy {
+            DialPolicy::All => true,
+            DialPolicy::RelaysOnly => peer.is_relay,
+            DialPolicy::TrustedOnly(trusted) => trusted.contains(&peer.node_id),
         }
     }
 
@@ -382,12 +425,14 @@ impl Governor {
             .peers
             .values()
             .filter(|p| {
-                matches!(p.state, PeerState::Cold) && {
-                    // Skip peers still in reconnect backoff
-                    let backoff = Self::reconnect_backoff(p.disconnect_count);
-                    p.last_disconnected
-                        .is_none_or(|t| now.duration_since(t) >= backoff)
-                }
+                matches!(p.state, PeerState::Cold)
+                    && self.is_dialable(p)
+                    && {
+                        // Skip peers still in reconnect backoff
+                        let backoff = Self::reconnect_backoff(p.disconnect_count);
+                        p.last_disconnected
+                            .is_none_or(|t| now.duration_since(t) >= backoff)
+                    }
             })
             .map(|p| (p.node_id, p.has_group_overlap(&self.our_groups)))
             .collect::<Vec<_>>()
@@ -405,11 +450,13 @@ impl Governor {
                 .peers
                 .values()
                 .filter(|p| {
-                    matches!(p.state, PeerState::Cold) && {
-                        let backoff = Self::reconnect_backoff(p.disconnect_count);
-                        p.last_disconnected
-                            .is_none_or(|t| now.duration_since(t) >= backoff)
-                    }
+                    matches!(p.state, PeerState::Cold)
+                        && self.is_dialable(p)
+                        && {
+                            let backoff = Self::reconnect_backoff(p.disconnect_count);
+                            p.last_disconnected
+                                .is_none_or(|t| now.duration_since(t) >= backoff)
+                        }
                 })
                 .take(needed)
                 .map(|p| p.node_id)
@@ -549,11 +596,11 @@ impl Governor {
             }
         }
 
-        // Promote random cold → warm (to replace)
+        // Promote random cold → warm (to replace), filtered by dial policy
         let cold_ids: Vec<NodeId> = self
             .peers
             .values()
-            .filter(|p| matches!(p.state, PeerState::Cold))
+            .filter(|p| matches!(p.state, PeerState::Cold) && self.is_dialable(p))
             .take(churn_count)
             .map(|p| p.node_id)
             .collect();
@@ -887,6 +934,103 @@ mod tests {
         assert!(
             !peer0_promoted,
             "recently demoted peer must not be re-promoted"
+        );
+    }
+
+    #[test]
+    fn test_dial_policy_all() {
+        let targets = GovernorTargets {
+            warm_min: 5,
+            ..Default::default()
+        };
+        let mut gov = Governor::with_dial_policy(targets, vec!["g1".into()], DialPolicy::All);
+
+        let relay_id = make_node_id(1);
+        let personal_id = make_node_id(2);
+        gov.add_peer(relay_id, make_addr(), vec!["g1".into()]);
+        gov.set_peer_relay(&relay_id, true);
+        gov.add_peer(personal_id, make_addr(), vec!["g1".into()]);
+
+        let actions = gov.tick();
+        assert!(
+            actions.connect.contains(&relay_id),
+            "relay should be in connect with DialPolicy::All"
+        );
+        assert!(
+            actions.connect.contains(&personal_id),
+            "personal should be in connect with DialPolicy::All"
+        );
+    }
+
+    #[test]
+    fn test_dial_policy_relays_only() {
+        let targets = GovernorTargets {
+            warm_min: 5,
+            ..Default::default()
+        };
+        let mut gov =
+            Governor::with_dial_policy(targets, vec!["g1".into()], DialPolicy::RelaysOnly);
+
+        let relay_id = make_node_id(1);
+        let personal_id = make_node_id(2);
+        gov.add_peer(relay_id, make_addr(), vec!["g1".into()]);
+        gov.set_peer_relay(&relay_id, true);
+        gov.add_peer(personal_id, make_addr(), vec!["g1".into()]);
+
+        let actions = gov.tick();
+        assert!(
+            actions.connect.contains(&relay_id),
+            "relay should be in connect with DialPolicy::RelaysOnly"
+        );
+        assert!(
+            !actions.connect.contains(&personal_id),
+            "personal should NOT be in connect with DialPolicy::RelaysOnly"
+        );
+    }
+
+    #[test]
+    fn test_dial_policy_trusted_only() {
+        let trusted_id = make_node_id(1);
+        let untrusted_id = make_node_id(2);
+
+        let targets = GovernorTargets {
+            warm_min: 5,
+            ..Default::default()
+        };
+        let mut gov = Governor::with_dial_policy(
+            targets,
+            vec!["g1".into()],
+            DialPolicy::TrustedOnly(vec![trusted_id]),
+        );
+
+        gov.add_peer(trusted_id, make_addr(), vec!["g1".into()]);
+        gov.set_peer_relay(&trusted_id, true);
+        gov.add_peer(untrusted_id, make_addr(), vec!["g1".into()]);
+        gov.set_peer_relay(&untrusted_id, true); // relay but not trusted
+
+        let actions = gov.tick();
+        assert!(
+            actions.connect.contains(&trusted_id),
+            "trusted relay should be in connect"
+        );
+        assert!(
+            !actions.connect.contains(&untrusted_id),
+            "untrusted relay should NOT be in connect with TrustedOnly"
+        );
+    }
+
+    #[test]
+    fn test_relay_flag_preserved_on_replace() {
+        let mut gov = Governor::new(GovernorTargets::default(), vec!["g1".into()]);
+        let old_id = make_node_id(99);
+        let new_id = make_node_id(1);
+        gov.add_peer(old_id, make_addr(), vec![]);
+        gov.set_peer_relay(&old_id, true);
+
+        gov.replace_node_id(&old_id, new_id, vec!["g1".into()]);
+        assert!(
+            gov.peer_info(&new_id).unwrap().is_relay,
+            "relay flag should be preserved after replace_node_id"
         );
     }
 
