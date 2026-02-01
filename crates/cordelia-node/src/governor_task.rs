@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use cordelia_governor::Governor;
 use cordelia_storage::Storage;
+use rand::Rng;
 use tokio::sync::{broadcast, Mutex};
 
 use crate::config::BootnodeEntry;
@@ -56,6 +57,8 @@ pub async fn run_governor_loop(
     let mut tick_count: u64 = 0;
     // Exchange groups every 6 ticks (60s at 10s tick interval)
     const GROUP_EXCHANGE_EVERY: u64 = 6;
+    // Discover new peers via gossip every 3 ticks (30s at 10s tick interval)
+    const PEER_DISCOVERY_EVERY: u64 = 3;
     // Retry unresolved bootnodes every 30 ticks (5 minutes)
     const BOOTNODE_RETRY_EVERY: u64 = 30;
 
@@ -275,6 +278,70 @@ pub async fn run_governor_loop(
                 });
             }
         }
+
+        // Periodic peer discovery via gossip
+        if tick_count.is_multiple_of(PEER_DISCOVERY_EVERY) {
+            let pool2 = pool.clone();
+            let gov2 = governor.clone();
+            let nid = our_node_id;
+            tokio::spawn(async move {
+                discover_peers(&pool2, &gov2, nid).await;
+            });
+        }
+    }
+}
+
+/// Ask a random connected relay peer for its known peers, then register
+/// any new ones in the governor. Fire-and-forget; errors are debug-logged.
+async fn discover_peers(
+    pool: &PeerPool,
+    governor: &Arc<Mutex<Governor>>,
+    our_node_id: [u8; 32],
+) {
+    let relays = pool.relay_peers().await;
+    if relays.is_empty() {
+        return;
+    }
+
+    // Pick a random relay
+    let idx = rand::thread_rng().gen_range(0..relays.len());
+    let relay = &relays[idx];
+
+    let peers = match crate::mini_protocols::request_peers(&relay.connection, 20).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::debug!(
+                relay = hex::encode(relay.node_id),
+                "peer discovery failed: {e}"
+            );
+            return;
+        }
+    };
+
+    if peers.is_empty() {
+        return;
+    }
+
+    let mut gov = governor.lock().await;
+    let mut added = 0u32;
+    for pa in &peers {
+        if pa.node_id == our_node_id || pa.addrs.is_empty() {
+            continue;
+        }
+        gov.add_peer(pa.node_id, pa.addrs.clone(), pa.groups.clone());
+        if pa.role == "relay" {
+            gov.set_peer_relay(&pa.node_id, true);
+        }
+        added += 1;
+    }
+    drop(gov);
+
+    if added > 0 {
+        tracing::info!(
+            relay = hex::encode(relay.node_id),
+            discovered = added,
+            "peer discovery: registered new peers via gossip"
+        );
     }
 }
 

@@ -386,7 +386,6 @@ pub async fn handle_peer_share(
     Ok(())
 }
 
-#[allow(dead_code)]
 /// Request peers from a remote node.
 pub async fn request_peers(
     conn: &quinn::Connection,
