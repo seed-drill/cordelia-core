@@ -909,8 +909,7 @@ mod tests {
         gov.peers.get_mut(&id1).unwrap().state = PeerState::Hot;
 
         // Simulate dead timeout on peer 0 so reap_dead demotes it
-        gov.peers.get_mut(&id0).unwrap().last_activity =
-            Instant::now() - Duration::from_secs(100);
+        gov.peers.get_mut(&id0).unwrap().last_activity = Instant::now() - Duration::from_secs(100);
 
         let actions = gov.tick();
 

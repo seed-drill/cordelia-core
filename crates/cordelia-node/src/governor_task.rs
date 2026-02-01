@@ -296,11 +296,7 @@ async fn discover_peers(
             Ok(id) => id,
             Err(_) => continue,
         };
-        let addrs: Vec<Multiaddr> = pa
-            .addrs
-            .iter()
-            .filter_map(|a| a.parse().ok())
-            .collect();
+        let addrs: Vec<Multiaddr> = pa.addrs.iter().filter_map(|a| a.parse().ok()).collect();
         if addrs.is_empty() {
             continue;
         }
@@ -360,8 +356,7 @@ fn seed_bootnode(gov: &mut Governor, bootnode_addr: &str, addr: Multiaddr) {
     let len = seed.len().min(hash_bytes.len());
     seed[..len].copy_from_slice(&hash_bytes[..len]);
 
-    let keypair = libp2p::identity::Keypair::ed25519_from_bytes(seed)
-        .expect("valid ed25519 seed");
+    let keypair = libp2p::identity::Keypair::ed25519_from_bytes(seed).expect("valid ed25519 seed");
     let placeholder_id = PeerId::from(keypair.public());
 
     gov.add_peer(placeholder_id, vec![addr.clone()], vec![]);

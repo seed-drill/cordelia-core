@@ -66,9 +66,7 @@ impl NodeIdentity {
     /// - Bytes 18..50: 32-byte Ed25519 seed (private key)
     ///
     /// We extract the seed and use it to create a libp2p ed25519 keypair.
-    fn pkcs8_to_libp2p_keypair(
-        pkcs8_der: &[u8],
-    ) -> Result<libp2p::identity::Keypair, CryptoError> {
+    fn pkcs8_to_libp2p_keypair(pkcs8_der: &[u8]) -> Result<libp2p::identity::Keypair, CryptoError> {
         // ring Ed25519 PKCS#8 v1 DER: the 32-byte seed starts at offset 16
         // after the ASN.1 header: SEQUENCE { SEQUENCE { OID }, OCTET STRING { seed } }
         // The OCTET STRING at position 14 has tag 0x04, length 0x22 (34),

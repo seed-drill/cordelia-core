@@ -155,9 +155,7 @@ pub fn build_swarm(
         .with_tokio()
         .with_quic()
         .with_behaviour(|_| behaviour)?
-        .with_swarm_config(|cfg| {
-            cfg.with_idle_connection_timeout(Duration::from_secs(120))
-        })
+        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(120)))
         .build();
 
     swarm.listen_on(listen_addr)?;
@@ -339,10 +337,17 @@ fn handle_behaviour_event(
         }) => {
             // Respond with empty peer list (governor task populates via gossip)
             let resp = PeerShareResponse { peers: vec![] };
-            let _ = swarm.behaviour_mut().peer_share.send_response(channel, resp);
+            let _ = swarm
+                .behaviour_mut()
+                .peer_share
+                .send_response(channel, resp);
         }
         CordeliaBehaviourEvent::PeerShare(request_response::Event::Message {
-            message: request_response::Message::Response { request_id, response },
+            message:
+                request_response::Message::Response {
+                    request_id,
+                    response,
+                },
             ..
         }) => {
             if let Some(tx) = pending_peer_share.remove(&request_id) {
@@ -361,14 +366,24 @@ fn handle_behaviour_event(
 
         // -- Memory Sync --
         CordeliaBehaviourEvent::MemorySync(request_response::Event::Message {
-            message: request_response::Message::Request { request, channel, .. },
+            message:
+                request_response::Message::Request {
+                    request, channel, ..
+                },
             ..
         }) => {
             let resp = handle_sync_request(storage, &request);
-            let _ = swarm.behaviour_mut().memory_sync.send_response(channel, resp);
+            let _ = swarm
+                .behaviour_mut()
+                .memory_sync
+                .send_response(channel, resp);
         }
         CordeliaBehaviourEvent::MemorySync(request_response::Event::Message {
-            message: request_response::Message::Response { request_id, response },
+            message:
+                request_response::Message::Response {
+                    request_id,
+                    response,
+                },
             ..
         }) => {
             if let Some(tx) = pending_sync.remove(&request_id) {
@@ -387,14 +402,24 @@ fn handle_behaviour_event(
 
         // -- Memory Fetch --
         CordeliaBehaviourEvent::MemoryFetch(request_response::Event::Message {
-            message: request_response::Message::Request { request, channel, .. },
+            message:
+                request_response::Message::Request {
+                    request, channel, ..
+                },
             ..
         }) => {
             let resp = handle_fetch_request(storage, &request);
-            let _ = swarm.behaviour_mut().memory_fetch.send_response(channel, resp);
+            let _ = swarm
+                .behaviour_mut()
+                .memory_fetch
+                .send_response(channel, resp);
         }
         CordeliaBehaviourEvent::MemoryFetch(request_response::Event::Message {
-            message: request_response::Message::Response { request_id, response },
+            message:
+                request_response::Message::Response {
+                    request_id,
+                    response,
+                },
             ..
         }) => {
             if let Some(tx) = pending_fetch.remove(&request_id) {
@@ -413,11 +438,17 @@ fn handle_behaviour_event(
 
         // -- Memory Push --
         CordeliaBehaviourEvent::MemoryPush(request_response::Event::Message {
-            message: request_response::Message::Request { request, channel, .. },
+            message:
+                request_response::Message::Request {
+                    request, channel, ..
+                },
             ..
         }) => {
             let ack = handle_push_request(storage, &request, our_groups);
-            let _ = swarm.behaviour_mut().memory_push.send_response(channel, ack);
+            let _ = swarm
+                .behaviour_mut()
+                .memory_push
+                .send_response(channel, ack);
         }
         CordeliaBehaviourEvent::MemoryPush(request_response::Event::Message {
             message: request_response::Message::Response { .. },
@@ -434,10 +465,17 @@ fn handle_behaviour_event(
             let resp = GroupExchangeResponse {
                 groups: our_groups.to_vec(),
             };
-            let _ = swarm.behaviour_mut().group_exchange.send_response(channel, resp);
+            let _ = swarm
+                .behaviour_mut()
+                .group_exchange
+                .send_response(channel, resp);
         }
         CordeliaBehaviourEvent::GroupExchange(request_response::Event::Message {
-            message: request_response::Message::Response { request_id, response },
+            message:
+                request_response::Message::Response {
+                    request_id,
+                    response,
+                },
             ..
         }) => {
             if let Some(tx) = pending_group_exchange.remove(&request_id) {

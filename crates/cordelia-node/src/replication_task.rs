@@ -9,9 +9,7 @@ use std::sync::Arc;
 
 use cordelia_api::WriteNotification;
 use cordelia_protocol::era::CURRENT_ERA;
-use cordelia_protocol::messages::{
-    FetchRequest, FetchedItem, MemoryPushRequest, SyncRequest,
-};
+use cordelia_protocol::messages::{FetchRequest, FetchedItem, MemoryPushRequest, SyncRequest};
 use cordelia_replication::{GroupCulture, ReplicationEngine};
 use cordelia_storage::Storage;
 use tokio::sync::{broadcast, mpsc};
@@ -38,8 +36,7 @@ pub async fn run_replication_loop(
     mut write_rx: broadcast::Receiver<WriteNotification>,
     mut shutdown: broadcast::Receiver<()>,
 ) {
-    let sync_interval =
-        std::time::Duration::from_secs(engine.config().sync_interval_moderate_secs);
+    let sync_interval = std::time::Duration::from_secs(engine.config().sync_interval_moderate_secs);
     let mut sync_timer = tokio::time::interval(sync_interval);
     sync_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     sync_timer.tick().await;
