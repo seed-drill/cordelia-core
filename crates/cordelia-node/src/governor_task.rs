@@ -15,6 +15,7 @@ use rand::Rng;
 use tokio::sync::{broadcast, Mutex};
 
 use crate::config::BootnodeEntry;
+use crate::external_addr::ExternalAddr;
 use crate::peer_pool::PeerPool;
 use crate::quic_transport::QuicTransport;
 
@@ -29,6 +30,7 @@ pub async fn run_governor_loop(
     our_node_id: [u8; 32],
     our_groups: Vec<String>,
     our_role: String,
+    external_addr: Arc<tokio::sync::RwLock<ExternalAddr>>,
     mut shutdown: broadcast::Receiver<()>,
     shutdown_tx: broadcast::Sender<()>,
 ) {
@@ -106,6 +108,7 @@ pub async fn run_governor_loop(
                 let storage = storage.clone();
                 let our_groups = our_groups.clone();
                 let our_role = our_role.clone();
+                let external_addr = external_addr.clone();
 
                 tokio::spawn(async move {
                     match transport.dial(addr).await {
@@ -115,6 +118,7 @@ pub async fn run_governor_loop(
                                 &pool,
                                 our_node_id,
                                 &our_groups,
+                                &external_addr,
                             )
                             .await
                             {
@@ -171,12 +175,14 @@ pub async fn run_governor_loop(
                                     // Spawn keepalive loop to keep governor activity fresh
                                     let ka_conn = conn.clone();
                                     let ka_gov = governor.clone();
+                                    let ka_ext = external_addr.clone();
                                     let ka_shutdown = shutdown_tx.subscribe();
                                     tokio::spawn(async move {
                                         crate::mini_protocols::run_keepalive_loop(
                                             &ka_conn,
                                             &peer_id,
                                             &ka_gov,
+                                            &ka_ext,
                                             ka_shutdown,
                                         )
                                         .await;
@@ -188,6 +194,7 @@ pub async fn run_governor_loop(
                                     let groups2 = our_groups.clone();
                                     let role2 = our_role.clone();
                                     let gov2 = governor.clone();
+                                    let ext2 = external_addr.clone();
                                     tokio::spawn(async move {
                                         crate::quic_transport::run_connection(
                                             conn,
@@ -198,6 +205,7 @@ pub async fn run_governor_loop(
                                             groups2,
                                             role2,
                                             Some(gov2),
+                                            ext2,
                                             false,
                                         )
                                         .await;
@@ -283,17 +291,24 @@ pub async fn run_governor_loop(
         if tick_count.is_multiple_of(PEER_DISCOVERY_EVERY) {
             let pool2 = pool.clone();
             let gov2 = governor.clone();
+            let ext2 = external_addr.clone();
             let nid = our_node_id;
             tokio::spawn(async move {
-                discover_peers(&pool2, &gov2, nid).await;
+                discover_peers(&pool2, &gov2, &ext2, nid).await;
             });
         }
     }
 }
 
 /// Ask a random connected relay peer for its known peers, then register
-/// any new ones in the governor. Fire-and-forget; errors are debug-logged.
-async fn discover_peers(pool: &PeerPool, governor: &Arc<Mutex<Governor>>, our_node_id: [u8; 32]) {
+/// any new ones in the governor. Filters out hairpin peers (same external IP).
+/// Fire-and-forget; errors are debug-logged.
+async fn discover_peers(
+    pool: &PeerPool,
+    governor: &Arc<Mutex<Governor>>,
+    external_addr: &Arc<tokio::sync::RwLock<ExternalAddr>>,
+    our_node_id: [u8; 32],
+) {
     let relays = pool.relay_peers().await;
     if relays.is_empty() {
         return;
@@ -318,10 +333,21 @@ async fn discover_peers(pool: &PeerPool, governor: &Arc<Mutex<Governor>>, our_no
         return;
     }
 
+    let ext = external_addr.read().await;
     let mut gov = governor.lock().await;
     let mut added = 0u32;
     for pa in &peers {
         if pa.node_id == our_node_id || pa.addrs.is_empty() {
+            continue;
+        }
+        // Filter hairpin candidates: skip peers whose every address matches our
+        // external IP. RFC1918 addresses always pass through (is_same_nat returns false).
+        let all_hairpin = pa.addrs.iter().all(|a| ext.is_same_nat(a.ip()));
+        if all_hairpin {
+            tracing::debug!(
+                peer = hex::encode(pa.node_id),
+                "skipping hairpin peer (same external IP)"
+            );
             continue;
         }
         gov.add_peer(pa.node_id, pa.addrs.clone(), pa.groups.clone());
@@ -331,6 +357,7 @@ async fn discover_peers(pool: &PeerPool, governor: &Arc<Mutex<Governor>>, our_no
         added += 1;
     }
     drop(gov);
+    drop(ext);
 
     if added > 0 {
         tracing::info!(

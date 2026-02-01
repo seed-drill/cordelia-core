@@ -7,6 +7,7 @@
 //!   cordelia-node identity generate    # Generate new identity
 
 mod config;
+mod external_addr;
 mod governor_task;
 mod mini_protocols;
 mod peer_pool;
@@ -201,6 +202,16 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let shared_groups = Arc::new(tokio::sync::RwLock::new(initial_groups.clone()));
     let our_groups = initial_groups;
 
+    // External address tracker (NAT hairpin avoidance)
+    let external_addr = Arc::new(tokio::sync::RwLock::new(
+        external_addr::ExternalAddr::new(
+            cfg.network
+                .external_addr
+                .as_deref()
+                .and_then(|s| s.parse::<std::net::SocketAddr>().ok()),
+        ),
+    ));
+
     // Shutdown broadcast channel
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
 
@@ -311,6 +322,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let groups = our_groups.clone();
         let role = our_role.as_str().to_string();
         let governor = governor.clone();
+        let external_addr = external_addr.clone();
         let shutdown = shutdown_tx.subscribe();
         tokio::spawn(async move {
             transport
@@ -321,6 +333,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                     groups,
                     role,
                     Some(governor),
+                    external_addr,
                     shutdown,
                 )
                 .await;
@@ -336,6 +349,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let bootnodes = cfg.network.bootnodes.clone();
         let groups = our_groups.clone();
         let role = our_role.as_str().to_string();
+        let external_addr = external_addr.clone();
         let shutdown = shutdown_tx.subscribe();
         let shutdown_tx_clone = shutdown_tx.clone();
         tokio::spawn(async move {
@@ -348,6 +362,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 our_node_id,
                 groups,
                 role,
+                external_addr,
                 shutdown,
                 shutdown_tx_clone,
             )
@@ -616,6 +631,12 @@ mod tests {
     use cordelia_storage::{L2ItemWrite, SqliteStorage};
     use std::net::SocketAddr;
 
+    fn test_external_addr() -> Arc<tokio::sync::RwLock<external_addr::ExternalAddr>> {
+        Arc::new(tokio::sync::RwLock::new(
+            external_addr::ExternalAddr::new(None),
+        ))
+    }
+
     /// Two-node integration test: spawn two in-process QUIC endpoints, handshake,
     /// write an item on node A, sync+fetch to node B, verify it arrives.
     #[tokio::test]
@@ -656,10 +677,12 @@ mod tests {
         let (shutdown_tx_b, _) = tokio::sync::broadcast::channel::<()>(1);
 
         // Spawn node B's accept loop
+        let ext_b = test_external_addr();
         let listen_handle = {
             let pool_b = pool_b.clone();
             let storage_b = storage_b.clone();
             let groups_b = our_groups.clone();
+            let ext_b = ext_b.clone();
             let shutdown = shutdown_tx_b.subscribe();
             tokio::spawn(async move {
                 transport_b
@@ -670,6 +693,7 @@ mod tests {
                         groups_b,
                         "relay".into(),
                         None,
+                        ext_b,
                         shutdown,
                     )
                     .await;
@@ -683,9 +707,11 @@ mod tests {
         let conn = transport_a.dial(real_addr_b).await.unwrap();
 
         // Outbound handshake from A -> B
-        let peer_id = quic_transport::outbound_handshake(&conn, &pool_a, node_id_a, &our_groups)
-            .await
-            .unwrap();
+        let ext_a = test_external_addr();
+        let peer_id =
+            quic_transport::outbound_handshake(&conn, &pool_a, node_id_a, &our_groups, &ext_a)
+                .await
+                .unwrap();
 
         assert_eq!(peer_id, node_id_b, "handshake should return node B's ID");
 
@@ -694,6 +720,7 @@ mod tests {
         let pool_a_accept = pool_a.clone();
         let storage_a_accept = storage_a.clone();
         let groups_a_accept = our_groups.clone();
+        let ext_a2 = ext_a.clone();
         let _accept_handle = tokio::spawn(async move {
             quic_transport::run_connection(
                 conn_for_accept,
@@ -704,6 +731,7 @@ mod tests {
                 groups_a_accept,
                 "relay".into(),
                 None,
+                ext_a2,
                 false,
             )
             .await;
@@ -881,11 +909,13 @@ mod tests {
         let repl_b = ReplicationEngine::new(ReplicationConfig::default(), "node-b".into());
 
         // Spawn node B: accept loop + replication
+        let ext_b = test_external_addr();
         let _listen_b = {
             let transport_b = transport_b.clone();
             let pool_b = pool_b.clone();
             let storage_b = storage_b.clone();
             let groups_b = our_groups_b.clone();
+            let ext_b = ext_b.clone();
             let shutdown = shutdown_tx_b.subscribe();
             tokio::spawn(async move {
                 transport_b
@@ -896,6 +926,7 @@ mod tests {
                         groups_b,
                         "relay".into(),
                         None,
+                        ext_b,
                         shutdown,
                     )
                     .await;
@@ -933,10 +964,12 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // A dials B, handshakes
+        let ext_a = test_external_addr();
         let conn = transport_a.dial(real_addr_b).await.unwrap();
-        let peer_id = quic_transport::outbound_handshake(&conn, &pool_a, node_id_a, &our_groups_a)
-            .await
-            .unwrap();
+        let peer_id =
+            quic_transport::outbound_handshake(&conn, &pool_a, node_id_a, &our_groups_a, &ext_a)
+                .await
+                .unwrap();
         assert_eq!(peer_id, node_id_b);
 
         // Mark peer as Hot in pool A (simulating governor promotion)
@@ -949,6 +982,7 @@ mod tests {
             let pool_a = pool_a.clone();
             let storage_a = storage_a.clone();
             let groups_a = our_groups_a.clone();
+            let ext_a = ext_a.clone();
             tokio::spawn(async move {
                 quic_transport::run_connection(
                     conn,
@@ -959,6 +993,7 @@ mod tests {
                     groups_a,
                     "relay".into(),
                     None,
+                    ext_a,
                     false,
                 )
                 .await;
@@ -1057,6 +1092,7 @@ mod tests {
 
         println!("QUIC connected to {}", conn.remote_address());
 
+        let ext = test_external_addr();
         let peer_id = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             quic_transport::outbound_handshake(
@@ -1064,6 +1100,7 @@ mod tests {
                 &pool,
                 *id.node_id(),
                 &["test-group".to_string()],
+                &ext,
             ),
         )
         .await
@@ -1104,6 +1141,7 @@ mod tests {
             .expect("dial timed out")
             .expect("dial failed");
 
+        let ext = test_external_addr();
         let peer_id = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             quic_transport::outbound_handshake(
@@ -1111,6 +1149,7 @@ mod tests {
                 &pool,
                 *id.node_id(),
                 &["boot-test-group".to_string()],
+                &ext,
             ),
         )
         .await

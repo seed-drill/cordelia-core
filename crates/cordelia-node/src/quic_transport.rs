@@ -14,6 +14,7 @@ use cordelia_governor::Governor;
 use cordelia_protocol::tls;
 use tokio::sync::{broadcast, Mutex};
 
+use crate::external_addr::ExternalAddr;
 use crate::mini_protocols;
 use crate::peer_pool::PeerPool;
 
@@ -65,6 +66,7 @@ impl QuicTransport {
     }
 
     /// Run the accept loop -- spawns a task per inbound connection.
+    #[allow(clippy::too_many_arguments)]
     pub async fn listen(
         &self,
         pool: PeerPool,
@@ -73,6 +75,7 @@ impl QuicTransport {
         our_groups: Vec<String>,
         our_role: String,
         governor: Option<Arc<Mutex<Governor>>>,
+        external_addr: Arc<tokio::sync::RwLock<ExternalAddr>>,
         shutdown: broadcast::Receiver<()>,
     ) {
         let mut shutdown = shutdown;
@@ -87,6 +90,7 @@ impl QuicTransport {
                             let our_groups = our_groups.clone();
                             let our_role = our_role.clone();
                             let governor = governor.clone();
+                            let external_addr = external_addr.clone();
                             tokio::spawn(async move {
                                 match incoming.await {
                                     Ok(conn) => {
@@ -94,7 +98,7 @@ impl QuicTransport {
                                             remote = %conn.remote_address(),
                                             "accepted inbound connection"
                                         );
-                                        run_connection(conn, [0u8; 32], pool, storage, our_node_id, our_groups, our_role, governor, true).await;
+                                        run_connection(conn, [0u8; 32], pool, storage, our_node_id, our_groups, our_role, governor, external_addr, true).await;
                                     }
                                     Err(e) => {
                                         tracing::warn!("failed to accept connection: {e}");
@@ -130,6 +134,7 @@ pub async fn run_connection(
     our_groups: Vec<String>,
     our_role: String,
     governor: Option<Arc<Mutex<Governor>>>,
+    external_addr: Arc<tokio::sync::RwLock<ExternalAddr>>,
     inbound: bool,
 ) {
     let remote = conn.remote_address();
@@ -146,6 +151,7 @@ pub async fn run_connection(
                     &pool,
                     our_node_id,
                     &our_groups,
+                    &external_addr,
                 )
                 .await
                 {
@@ -187,6 +193,7 @@ pub async fn run_connection(
                 let our_groups = our_groups.clone();
                 let our_role = our_role.clone();
                 let peer_id = resolved_peer_id;
+                let conn_for_stream = conn.clone();
                 tokio::spawn(async move {
                     // Read protocol byte
                     let mut proto_buf = [0u8; 1];
@@ -200,7 +207,9 @@ pub async fn run_connection(
 
                     match proto_buf[0] {
                         PROTO_KEEPALIVE => {
-                            if let Err(e) = mini_protocols::handle_keepalive(send, recv).await {
+                            if let Err(e) =
+                                mini_protocols::handle_keepalive(send, recv, &conn_for_stream).await
+                            {
                                 tracing::debug!("keepalive error: {e}");
                             }
                         }
@@ -313,10 +322,18 @@ pub async fn outbound_handshake(
     pool: &PeerPool,
     our_node_id: [u8; 32],
     our_groups: &[String],
+    external_addr: &Arc<tokio::sync::RwLock<ExternalAddr>>,
 ) -> Result<[u8; 32], Box<dyn std::error::Error + Send + Sync>> {
     let (send, recv) = conn.open_bi().await?;
-    let peer_node_id =
-        mini_protocols::handle_outbound_handshake(send, recv, conn, pool, our_node_id, our_groups)
-            .await?;
+    let peer_node_id = mini_protocols::handle_outbound_handshake(
+        send,
+        recv,
+        conn,
+        pool,
+        our_node_id,
+        our_groups,
+        external_addr,
+    )
+    .await?;
     Ok(peer_node_id)
 }

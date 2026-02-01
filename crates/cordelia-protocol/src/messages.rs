@@ -64,6 +64,9 @@ pub struct HandshakeAccept {
     pub timestamp: u64,
     pub groups: Vec<GroupId>,
     pub reject_reason: Option<String>,
+    /// The remote address we observe for the proposing peer (NAT hairpin avoidance).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_addr: Option<SocketAddr>,
 }
 
 // ============================================================================
@@ -81,6 +84,9 @@ pub struct Pong {
     pub seq: u64,
     pub sent_at_ns: u64,
     pub recv_at_ns: u64,
+    /// The remote address we observe for the pinging peer (NAT hairpin avoidance).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_addr: Option<SocketAddr>,
 }
 
 // ============================================================================
@@ -304,6 +310,7 @@ mod tests {
                 seq: 1,
                 sent_at_ns: 123,
                 recv_at_ns: 456,
+                observed_addr: None,
             }),
             Message::PeerShareRequest(PeerShareRequest { max_peers: 10 }),
             Message::SyncRequest(SyncRequest {

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::codec::Encoder;
 
+use crate::external_addr::ExternalAddr;
 use crate::peer_pool::PeerPool;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -81,6 +82,7 @@ pub async fn handle_inbound_handshake(
     pool: &PeerPool,
     our_node_id: NodeId,
     our_groups: &[String],
+    _external_addr: &Arc<tokio::sync::RwLock<ExternalAddr>>,
 ) -> Result<NodeId, BoxError> {
     // Read protocol byte
     let mut proto = [0u8; 1];
@@ -111,6 +113,7 @@ pub async fn handle_inbound_handshake(
                 "invalid magic: expected {:#010x}, got {:#010x}",
                 PROTOCOL_MAGIC, propose.magic
             )),
+            observed_addr: None,
         });
         write_message(&mut send, &reject).await?;
         return Err("invalid magic".into());
@@ -125,18 +128,20 @@ pub async fn handle_inbound_handshake(
             timestamp: now_ts(),
             groups: vec![],
             reject_reason: Some("no compatible version".into()),
+            observed_addr: None,
         });
         write_message(&mut send, &reject).await?;
         return Err("version mismatch".into());
     }
 
-    // Accept
+    // Accept -- tell the peer what address we see them as (NAT hairpin avoidance)
     let accept = Message::HandshakeAccept(HandshakeAccept {
         version,
         node_id: our_node_id,
         timestamp: now_ts(),
         groups: our_groups.to_vec(),
         reject_reason: None,
+        observed_addr: Some(conn.remote_address()),
     });
     write_message(&mut send, &accept).await?;
 
@@ -169,6 +174,7 @@ pub async fn handle_outbound_handshake(
     pool: &PeerPool,
     our_node_id: NodeId,
     our_groups: &[String],
+    external_addr: &Arc<tokio::sync::RwLock<ExternalAddr>>,
 ) -> Result<NodeId, BoxError> {
     // Write protocol byte
     send.write_all(&[crate::quic_transport::PROTO_HANDSHAKE])
@@ -198,6 +204,11 @@ pub async fn handle_outbound_handshake(
             accept.reject_reason.unwrap_or_default()
         )
         .into());
+    }
+
+    // Feed observed address for NAT hairpin avoidance
+    if let Some(observed) = accept.observed_addr {
+        external_addr.write().await.observe(observed.ip());
     }
 
     // Register peer in pool (relay status unknown at handshake, default false)
@@ -239,6 +250,7 @@ fn negotiate_version(peer_min: u16, peer_max: u16) -> u16 {
 pub async fn handle_keepalive(
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
+    conn: &quinn::Connection,
 ) -> Result<(), BoxError> {
     loop {
         let msg = match read_message(&mut recv).await {
@@ -252,6 +264,7 @@ pub async fn handle_keepalive(
                     seq: ping.seq,
                     sent_at_ns: ping.sent_at_ns,
                     recv_at_ns: now_ns(),
+                    observed_addr: Some(conn.remote_address()),
                 });
                 write_message(&mut send, &pong).await?;
             }
@@ -268,6 +281,7 @@ pub async fn run_keepalive_loop(
     conn: &quinn::Connection,
     node_id: &NodeId,
     governor: &Arc<tokio::sync::Mutex<cordelia_governor::Governor>>,
+    external_addr: &Arc<tokio::sync::RwLock<ExternalAddr>>,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) {
     let mut seq: u64 = 0;
@@ -321,6 +335,10 @@ pub async fn run_keepalive_loop(
                 let rtt_ns = now_ns().saturating_sub(pong.sent_at_ns);
                 let rtt_ms = rtt_ns as f64 / 1_000_000.0;
                 governor.lock().await.record_activity(node_id, Some(rtt_ms));
+                // Feed observed address for NAT hairpin avoidance
+                if let Some(observed) = pong.observed_addr {
+                    external_addr.write().await.observe(observed.ip());
+                }
             }
             _ => {
                 missed += 1;

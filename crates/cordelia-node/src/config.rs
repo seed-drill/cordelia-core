@@ -82,6 +82,10 @@ pub struct NetworkSection {
     /// Keeper-only: explicit relay allowlist. Ignored for other roles.
     #[serde(default)]
     pub trusted_relays: Vec<BootnodeEntry>,
+    /// Fixed external address override. Set this on relays/bootnodes with known
+    /// public IPs. Personal nodes behind NAT should leave this unset (learned via quorum).
+    #[serde(default)]
+    pub external_addr: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
