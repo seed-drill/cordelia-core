@@ -15,7 +15,7 @@ addr = "boot1.cordelia.seeddrill.io:9474"
 addr = "boot2.cordelia.seeddrill.io:9474"
 
 [[network.bootnodes]]
-addr = "boot4.cordelia.seeddrill.io:9474"
+addr = "boot4.cordelia.seeddrill.io:9475"
 
 [governor]
 hot_min = 2
