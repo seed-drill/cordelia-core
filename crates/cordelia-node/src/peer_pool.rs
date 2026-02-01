@@ -91,6 +91,18 @@ impl PeerPool {
             .collect()
     }
 
+    /// Get all active peers (Hot or Warm) that share a given group.
+    /// Used by push retries to maximise coverage in small meshes.
+    pub async fn active_peers_for_group(&self, group_id: &str) -> Vec<PeerHandle> {
+        self.inner
+            .read()
+            .await
+            .values()
+            .filter(|h| h.state.is_active() && h.group_intersection.contains(&group_id.to_string()))
+            .cloned()
+            .collect()
+    }
+
     /// Get all connected peers (Warm or Hot).
     pub async fn active_peers(&self) -> Vec<PeerHandle> {
         self.inner
@@ -187,8 +199,12 @@ impl PeerPool {
     }
 
     /// Get a random hot peer for a group (for anti-entropy sync).
+    /// Falls back to warm peers if no hot peers available (small mesh).
     pub async fn random_hot_peer_for_group(&self, group_id: &str) -> Option<PeerHandle> {
-        let peers = self.hot_peers_for_group(group_id).await;
+        let mut peers = self.hot_peers_for_group(group_id).await;
+        if peers.is_empty() {
+            peers = self.active_peers_for_group(group_id).await;
+        }
         if peers.is_empty() {
             return None;
         }

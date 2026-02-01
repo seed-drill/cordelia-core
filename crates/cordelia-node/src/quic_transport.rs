@@ -194,6 +194,7 @@ pub async fn run_connection(
                 let our_role = our_role.clone();
                 let peer_id = resolved_peer_id;
                 let conn_for_stream = conn.clone();
+                let gov_for_stream = governor.clone();
                 tokio::spawn(async move {
                     // Read protocol byte
                     let mut proto_buf = [0u8; 1];
@@ -207,8 +208,14 @@ pub async fn run_connection(
 
                     match proto_buf[0] {
                         PROTO_KEEPALIVE => {
-                            if let Err(e) =
-                                mini_protocols::handle_keepalive(send, recv, &conn_for_stream).await
+                            if let Err(e) = mini_protocols::handle_keepalive(
+                                send,
+                                recv,
+                                &conn_for_stream,
+                                &peer_id,
+                                gov_for_stream.as_ref(),
+                            )
+                            .await
                             {
                                 tracing::debug!("keepalive error: {e}");
                             }

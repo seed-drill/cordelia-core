@@ -71,6 +71,11 @@ pub struct ProtocolEra {
     pub sync_interval_taciturn_secs: u64,
     /// Days to retain tombstones before garbage collection.
     pub tombstone_retention_days: u32,
+    /// Push retry backoff schedule in seconds (up to 4 steps).
+    /// Items are re-pushed with increasing delay; no explicit ack.
+    pub push_retry_backoffs: [u64; 4],
+    /// Number of push retries to attempt (indexes into push_retry_backoffs).
+    pub push_retry_count: u32,
 
     // -- Governor scheduling (in ticks, not seconds) --
     /// Group exchange interval in governor ticks.
@@ -131,6 +136,8 @@ pub const ERA_0: ProtocolEra = ProtocolEra {
     sync_interval_moderate_secs: 300,
     sync_interval_taciturn_secs: 900,
     tombstone_retention_days: 7,
+    push_retry_backoffs: [5, 15, 60, 300], // aggressive early, converges to anti-entropy
+    push_retry_count: 4,
 
     // Governor scheduling
     group_exchange_ticks: 6,  // 60s at 10s tick
@@ -192,5 +199,15 @@ mod tests {
     #[test]
     fn test_max_message_bytes_is_512kb() {
         assert_eq!(ERA_0.max_message_bytes, 512 * 1024);
+    }
+
+    #[test]
+    fn test_push_retry_backoffs() {
+        let era = &ERA_0;
+        assert_eq!(era.push_retry_count, 4);
+        assert_eq!(era.push_retry_backoffs, [5, 15, 60, 300]);
+        // Final retry should align with anti-entropy interval
+        let last = era.push_retry_backoffs[(era.push_retry_count - 1) as usize];
+        assert_eq!(last, era.sync_interval_moderate_secs);
     }
 }

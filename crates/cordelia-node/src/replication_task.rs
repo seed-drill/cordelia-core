@@ -4,16 +4,27 @@
 //!   1. Local write notifications → dispatch to hot peers via pool
 //!   2. Anti-entropy timer → per-group sync with random hot peer
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cordelia_api::WriteNotification;
+use cordelia_protocol::era::CURRENT_ERA;
 use cordelia_protocol::messages::FetchedItem;
 use cordelia_replication::{GroupCulture, ReplicationEngine};
 use cordelia_storage::Storage;
 use tokio::sync::broadcast;
+use tokio::time::Instant;
 
 use crate::mini_protocols;
 use crate::peer_pool::PeerPool;
+
+/// A pending push awaiting retry delivery.
+struct PendingPush {
+    item: FetchedItem,
+    group_id: String,
+    attempt: usize,
+    next_at: Instant,
+}
 
 /// Run the replication loop until shutdown.
 pub async fn run_replication_loop(
@@ -31,9 +42,15 @@ pub async fn run_replication_loop(
     // Skip the first immediate tick
     sync_timer.tick().await;
 
+    // Push retry queue: item_id → pending push with backoff
+    let mut pending_pushes: HashMap<String, PendingPush> = HashMap::new();
+    let mut retry_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    retry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    retry_tick.tick().await;
+
     loop {
         tokio::select! {
-            // Local write notification → dispatch to peers
+            // Local write notification → dispatch to peers + enqueue retry
             write_result = write_rx.recv() => {
                 match write_result {
                     Ok(notif) => {
@@ -63,7 +80,15 @@ pub async fn run_replication_loop(
                                 "replication: outbound action"
                             );
 
-                            dispatch_outbound(action, &pool, &storage, group_id).await;
+                            if let Some(pending) = dispatch_outbound(action, &pool, &storage).await {
+                                tracing::debug!(
+                                    item_id = pending.item.item_id,
+                                    group = pending.group_id.as_str(),
+                                    retries = CURRENT_ERA.push_retry_count,
+                                    "enqueued push retry",
+                                );
+                                pending_pushes.insert(pending.item.item_id.clone(), pending);
+                            }
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -73,6 +98,52 @@ pub async fn run_replication_loop(
                         tracing::info!("write notification channel closed");
                         return;
                     }
+                }
+            }
+
+            // Push retry tick -- re-push pending items with backoff
+            _ = retry_tick.tick() => {
+                if pending_pushes.is_empty() {
+                    continue;
+                }
+                let now = Instant::now();
+                let mut retired = Vec::new();
+                for (item_id, pending) in pending_pushes.iter_mut() {
+                    if now < pending.next_at {
+                        continue;
+                    }
+                    let peers = pool.active_peers_for_group(&pending.group_id).await;
+                    if !peers.is_empty() {
+                        tracing::debug!(
+                            item_id = item_id.as_str(),
+                            attempt = pending.attempt + 1,
+                            peer_count = peers.len(),
+                            "push retry"
+                        );
+                        for peer in peers {
+                            let item = pending.item.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = send_push(&peer.connection, vec![item]).await {
+                                    tracing::debug!(
+                                        peer = hex::encode(peer.node_id),
+                                        "retry push failed: {e}"
+                                    );
+                                }
+                            });
+                        }
+                    }
+                    pending.attempt += 1;
+                    if pending.attempt >= CURRENT_ERA.push_retry_count as usize {
+                        retired.push(item_id.clone());
+                    } else {
+                        pending.next_at = now + std::time::Duration::from_secs(
+                            CURRENT_ERA.push_retry_backoffs[pending.attempt],
+                        );
+                    }
+                }
+                for id in retired {
+                    tracing::debug!(item_id = id, "push retry exhausted, relying on anti-entropy");
+                    pending_pushes.remove(&id);
                 }
             }
 
@@ -101,35 +172,49 @@ pub async fn run_replication_loop(
 }
 
 /// Dispatch an outbound action to peers.
+///
+/// Pushes to ALL active peers (hot + warm) for the group -- critical for small
+/// meshes where hot peers may not exist yet. Returns a `PendingPush` for the
+/// retry queue so the item is re-pushed with backoff until anti-entropy confirms.
 async fn dispatch_outbound(
     action: cordelia_replication::engine::OutboundAction,
     pool: &PeerPool,
     storage: &Arc<dyn Storage>,
-    _group_id: &str,
-) {
+) -> Option<PendingPush> {
     use cordelia_replication::engine::OutboundAction;
 
     match action {
         OutboundAction::BroadcastItem { group_id, item } => {
-            let peers = pool.hot_peers_for_group(&group_id).await;
-            for peer in peers {
+            let peers = pool.active_peers_for_group(&group_id).await;
+            tracing::debug!(
+                item_id = item.item_id,
+                peer_count = peers.len(),
+                "dispatch: broadcast item to active peers"
+            );
+            for peer in &peers {
                 let item = item.clone();
+                let conn = peer.connection.clone();
+                let nid = peer.node_id;
                 tokio::spawn(async move {
-                    if let Err(e) = send_push(&peer.connection, vec![item]).await {
-                        tracing::debug!(
-                            peer = hex::encode(peer.node_id),
-                            "broadcast item failed: {e}"
-                        );
+                    if let Err(e) = send_push(&conn, vec![item]).await {
+                        tracing::debug!(peer = hex::encode(nid), "broadcast item failed: {e}");
                     }
                 });
             }
+            Some(PendingPush {
+                item,
+                group_id,
+                attempt: 0,
+                next_at: Instant::now()
+                    + std::time::Duration::from_secs(CURRENT_ERA.push_retry_backoffs[0]),
+            })
         }
         OutboundAction::BroadcastHeader { group_id, header } => {
             // For notify-and-fetch (moderate culture), read the full item from
             // storage and push it. The pure header-only notify flow is not yet
             // implemented on the receive side.
             let full_item = storage.read_l2_item(&header.item_id).ok().flatten();
-            let peers = pool.hot_peers_for_group(&group_id).await;
+            let peers = pool.active_peers_for_group(&group_id).await;
             if let Some(row) = full_item {
                 let item = FetchedItem {
                     item_id: row.id,
@@ -143,20 +228,36 @@ async fn dispatch_outbound(
                     is_copy: row.is_copy,
                     updated_at: row.updated_at,
                 };
-                for peer in peers {
+                tracing::debug!(
+                    item_id = item.item_id,
+                    peer_count = peers.len(),
+                    "dispatch: broadcast header->push to active peers"
+                );
+                for peer in &peers {
                     let item = item.clone();
+                    let conn = peer.connection.clone();
+                    let nid = peer.node_id;
                     tokio::spawn(async move {
-                        if let Err(e) = send_push(&peer.connection, vec![item]).await {
+                        if let Err(e) = send_push(&conn, vec![item]).await {
                             tracing::debug!(
-                                peer = hex::encode(peer.node_id),
+                                peer = hex::encode(nid),
                                 "broadcast header->push failed: {e}"
                             );
                         }
                     });
                 }
+                Some(PendingPush {
+                    item,
+                    group_id,
+                    attempt: 0,
+                    next_at: Instant::now()
+                        + std::time::Duration::from_secs(CURRENT_ERA.push_retry_backoffs[0]),
+                })
+            } else {
+                None
             }
         }
-        OutboundAction::None => {}
+        OutboundAction::None => None,
     }
 }
 

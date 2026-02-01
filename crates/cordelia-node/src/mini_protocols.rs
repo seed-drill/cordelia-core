@@ -255,6 +255,8 @@ pub async fn handle_keepalive(
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
     conn: &quinn::Connection,
+    peer_id: &NodeId,
+    governor: Option<&Arc<tokio::sync::Mutex<cordelia_governor::Governor>>>,
 ) -> Result<(), BoxError> {
     loop {
         let msg = match read_message(&mut recv).await {
@@ -271,6 +273,12 @@ pub async fn handle_keepalive(
                     observed_addr: Some(conn.remote_address()),
                 });
                 write_message(&mut send, &pong).await?;
+
+                // Record activity so the governor knows this peer is alive.
+                // Without this, inbound peers hit DEAD_TIMEOUT and get reaped.
+                if let Some(gov) = governor {
+                    gov.lock().await.record_activity(peer_id, None);
+                }
             }
             _ => {
                 tracing::debug!("unexpected message in keepalive stream");
