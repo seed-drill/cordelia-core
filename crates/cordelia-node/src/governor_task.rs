@@ -190,6 +190,10 @@ pub async fn run_governor_loop(
                             gov.add_peer(peer_id, addrs.clone(), vec![]);
                             gov.mark_connected(&peer_id);
                         }
+                        // Check if governor knows this peer is a relay (e.g. seeded bootnode)
+                        let is_relay = gov.peer_info(&peer_id)
+                            .map(|p| p.is_relay)
+                            .unwrap_or(false);
                         drop(gov);
 
                         // Insert into pool as Warm
@@ -199,7 +203,7 @@ pub async fn run_governor_loop(
                             vec![], // groups populated on group exchange
                             cordelia_governor::PeerState::Warm,
                             1,     // protocol version
-                            false, // relay status unknown
+                            is_relay,
                         ).await;
 
                         // Immediate group exchange after connect
@@ -376,8 +380,8 @@ async fn discover_peers(
 }
 
 /// Parse a bootnode address string into a Multiaddr.
-/// Supports both raw Multiaddr format (/ip4/.../udp/.../quic-v1) and
-/// legacy host:port format (converted to /ip4/HOST/udp/PORT/quic-v1).
+/// Supports both raw Multiaddr format (/ip4/.../tcp/...) and
+/// legacy host:port format (converted to /ip4/HOST/tcp/PORT).
 fn parse_bootnode_multiaddr(boot: &BootnodeEntry) -> Option<Multiaddr> {
     // Try Multiaddr first
     if let Ok(addr) = boot.addr.parse::<Multiaddr>() {
@@ -393,7 +397,7 @@ fn parse_bootnode_multiaddr(boot: &BootnodeEntry) -> Option<Multiaddr> {
         .or_else(|| boot.addr.to_socket_addrs().ok().and_then(|mut a| a.next()))?;
 
     let multiaddr: Multiaddr = format!(
-        "/ip4/{}/udp/{}/quic-v1",
+        "/ip4/{}/tcp/{}",
         socket_addr.ip(),
         socket_addr.port()
     )

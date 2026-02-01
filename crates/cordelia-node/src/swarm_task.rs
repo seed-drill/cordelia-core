@@ -153,7 +153,12 @@ pub fn build_swarm(
 
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
-        .with_quic()
+        .with_tcp(
+            libp2p::tcp::Config::default(),
+            libp2p::noise::Config::new,
+            libp2p::yamux::Config::default,
+        )?
+        .with_dns()?
         .with_behaviour(|_| behaviour)?
         .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(120)))
         .build();
@@ -177,6 +182,8 @@ pub async fn run_swarm_loop(
     event_tx: broadcast::Sender<SwarmEvent2>,
     storage: Arc<dyn Storage>,
     our_groups: Vec<String>,
+    pool: crate::peer_pool::PeerPool,
+    our_role: crate::config::NodeRole,
     mut shutdown: broadcast::Receiver<()>,
 ) {
     // Track pending outbound request-response channels
@@ -266,6 +273,29 @@ pub async fn run_swarm_loop(
                     SwarmEvent::ExternalAddrConfirmed { address } => {
                         let _ = event_tx.send(SwarmEvent2::ExternalAddrConfirmed { addr: address });
                     }
+                    SwarmEvent::Behaviour(CordeliaBehaviourEvent::PeerShare(
+                        request_response::Event::Message {
+                            message: request_response::Message::Request { channel, request, .. },
+                            ..
+                        },
+                    )) => {
+                        // Handle peer share request async (needs pool access)
+                        let max = request.max_peers as usize;
+                        let relay_peers = pool.relay_peers().await;
+                        let peers: Vec<PeerAddress> = relay_peers
+                            .iter()
+                            .take(max)
+                            .map(|h| PeerAddress {
+                                peer_id: h.node_id.to_string(),
+                                addrs: h.addrs.iter().map(|a| a.to_string()).collect(),
+                                last_seen: 0,
+                                groups: h.groups.clone(),
+                                role: if h.is_relay { "relay".into() } else { our_role.as_str().into() },
+                            })
+                            .collect();
+                        let resp = PeerShareResponse { peers };
+                        let _ = swarm.behaviour_mut().peer_share.send_response(channel, resp);
+                    }
                     SwarmEvent::Behaviour(ev) => {
                         handle_behaviour_event(
                             ev,
@@ -347,17 +377,7 @@ fn handle_behaviour_event(
         }
 
         // -- Peer Share --
-        CordeliaBehaviourEvent::PeerShare(request_response::Event::Message {
-            message: request_response::Message::Request { channel, .. },
-            ..
-        }) => {
-            // Respond with empty peer list (governor task populates via gossip)
-            let resp = PeerShareResponse { peers: vec![] };
-            let _ = swarm
-                .behaviour_mut()
-                .peer_share
-                .send_response(channel, resp);
-        }
+        // Inbound requests handled in run_swarm_loop (needs async pool access)
         CordeliaBehaviourEvent::PeerShare(request_response::Event::Message {
             message:
                 request_response::Message::Response {

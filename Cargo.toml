@@ -15,7 +15,7 @@ members = [
 tokio = { version = "1", features = ["full"] }
 
 # P2P networking
-libp2p = { version = "0.54", features = ["tokio", "quic", "ping", "identify", "request-response", "json", "ed25519", "macros", "noise"] }
+libp2p = { version = "0.54", features = ["tokio", "tcp", "yamux", "quic", "dns", "ping", "identify", "request-response", "json", "ed25519", "macros", "noise"] }
 
 # Serialisation
 serde = { version = "1", features = ["derive"] }
