@@ -425,14 +425,12 @@ impl Governor {
             .peers
             .values()
             .filter(|p| {
-                matches!(p.state, PeerState::Cold)
-                    && self.is_dialable(p)
-                    && {
-                        // Skip peers still in reconnect backoff
-                        let backoff = Self::reconnect_backoff(p.disconnect_count);
-                        p.last_disconnected
-                            .is_none_or(|t| now.duration_since(t) >= backoff)
-                    }
+                matches!(p.state, PeerState::Cold) && self.is_dialable(p) && {
+                    // Skip peers still in reconnect backoff
+                    let backoff = Self::reconnect_backoff(p.disconnect_count);
+                    p.last_disconnected
+                        .is_none_or(|t| now.duration_since(t) >= backoff)
+                }
             })
             .map(|p| (p.node_id, p.has_group_overlap(&self.our_groups)))
             .collect::<Vec<_>>()
@@ -450,13 +448,11 @@ impl Governor {
                 .peers
                 .values()
                 .filter(|p| {
-                    matches!(p.state, PeerState::Cold)
-                        && self.is_dialable(p)
-                        && {
-                            let backoff = Self::reconnect_backoff(p.disconnect_count);
-                            p.last_disconnected
-                                .is_none_or(|t| now.duration_since(t) >= backoff)
-                        }
+                    matches!(p.state, PeerState::Cold) && self.is_dialable(p) && {
+                        let backoff = Self::reconnect_backoff(p.disconnect_count);
+                        p.last_disconnected
+                            .is_none_or(|t| now.duration_since(t) >= backoff)
+                    }
                 })
                 .take(needed)
                 .map(|p| p.node_id)

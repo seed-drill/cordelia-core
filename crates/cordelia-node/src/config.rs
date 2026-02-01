@@ -364,7 +364,10 @@ addr = "boot2.cordelia.seeddrill.io:9474"
         let cfg = NodeConfig::default(); // personal
         let eff = cfg.effective_governor_targets();
         assert!(eff.hot_max <= 5, "personal hot_max should be capped at 5");
-        assert!(eff.warm_max <= 10, "personal warm_max should be capped at 10");
+        assert!(
+            eff.warm_max <= 10,
+            "personal warm_max should be capped at 10"
+        );
     }
 
     #[test]

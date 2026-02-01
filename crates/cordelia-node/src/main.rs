@@ -270,8 +270,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                             entry.addr.to_socket_addrs().ok().and_then(|mut a| a.next())
                         })
                         .map(|addr| {
-                            let hash =
-                                cordelia_crypto::sha256_hex(addr.to_string().as_bytes());
+                            let hash = cordelia_crypto::sha256_hex(addr.to_string().as_bytes());
                             let hash_bytes = hex::decode(&hash).unwrap_or_default();
                             let mut id = [0u8; 32];
                             let len = id.len().min(hash_bytes.len());
@@ -315,7 +314,15 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let shutdown = shutdown_tx.subscribe();
         tokio::spawn(async move {
             transport
-                .listen(pool, storage, our_node_id, groups, role, Some(governor), shutdown)
+                .listen(
+                    pool,
+                    storage,
+                    our_node_id,
+                    groups,
+                    role,
+                    Some(governor),
+                    shutdown,
+                )
                 .await;
         })
     };
@@ -656,7 +663,15 @@ mod tests {
             let shutdown = shutdown_tx_b.subscribe();
             tokio::spawn(async move {
                 transport_b
-                    .listen(pool_b, storage_b, node_id_b, groups_b, "relay".into(), None, shutdown)
+                    .listen(
+                        pool_b,
+                        storage_b,
+                        node_id_b,
+                        groups_b,
+                        "relay".into(),
+                        None,
+                        shutdown,
+                    )
                     .await;
             })
         };
@@ -874,7 +889,15 @@ mod tests {
             let shutdown = shutdown_tx_b.subscribe();
             tokio::spawn(async move {
                 transport_b
-                    .listen(pool_b, storage_b, node_id_b, groups_b, "relay".into(), None, shutdown)
+                    .listen(
+                        pool_b,
+                        storage_b,
+                        node_id_b,
+                        groups_b,
+                        "relay".into(),
+                        None,
+                        shutdown,
+                    )
                     .await;
             })
         };
@@ -928,7 +951,14 @@ mod tests {
             let groups_a = our_groups_a.clone();
             tokio::spawn(async move {
                 quic_transport::run_connection(
-                    conn, [0u8; 32], pool_a, storage_a, node_id_a, groups_a, "relay".into(), None,
+                    conn,
+                    [0u8; 32],
+                    pool_a,
+                    storage_a,
+                    node_id_a,
+                    groups_a,
+                    "relay".into(),
+                    None,
                     false,
                 )
                 .await;
