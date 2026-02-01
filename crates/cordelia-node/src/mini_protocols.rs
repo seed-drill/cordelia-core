@@ -395,16 +395,26 @@ pub async fn handle_peer_share(
             let peers: Vec<PeerAddress> = shareable
                 .iter()
                 .take(req.max_peers as usize)
-                .map(|h| PeerAddress {
-                    node_id: h.node_id,
-                    addrs: vec![h.connection.remote_address()],
-                    last_seen: now_ts(),
-                    groups: h.groups.clone(),
-                    role: if h.is_relay {
-                        "relay".into()
-                    } else {
-                        String::new()
-                    },
+                .filter_map(|h| {
+                    let addr = h.connection.remote_address();
+                    // Don't share Docker bridge / unreachable private addresses
+                    if let std::net::IpAddr::V4(v4) = addr.ip() {
+                        let o = v4.octets();
+                        if o[0] == 172 && (16..=31).contains(&o[1]) {
+                            return None;
+                        }
+                    }
+                    Some(PeerAddress {
+                        node_id: h.node_id,
+                        addrs: vec![addr],
+                        last_seen: now_ts(),
+                        groups: h.groups.clone(),
+                        role: if h.is_relay {
+                            "relay".into()
+                        } else {
+                            String::new()
+                        },
+                    })
                 })
                 .collect();
 

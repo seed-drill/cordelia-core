@@ -100,6 +100,27 @@ pub async fn run_governor_loop(
             };
 
             if let Some(addr) = addr {
+                // Skip hairpin addresses (same external IP) and unreachable Docker bridge IPs
+                {
+                    let ext = external_addr.read().await;
+                    if ext.is_same_nat(addr.ip()) {
+                        tracing::debug!(
+                            peer = hex::encode(node_id),
+                            addr = %addr,
+                            "skipping dial: hairpin (same external IP)"
+                        );
+                        continue;
+                    }
+                    if crate::external_addr::is_rfc1918(addr.ip()) && !is_local_reachable(addr.ip())
+                    {
+                        tracing::debug!(
+                            peer = hex::encode(node_id),
+                            addr = %addr,
+                            "skipping dial: unreachable private address"
+                        );
+                        continue;
+                    }
+                }
                 let transport = transport.clone();
                 let pool = pool.clone();
                 let governor = governor.clone();
@@ -387,4 +408,21 @@ fn seed_bootnode(gov: &mut Governor, bootnode_addr: &str, addr: SocketAddr) {
     gov.add_peer(id, vec![addr], vec![]);
     gov.set_peer_relay(&id, true);
     tracing::info!(bootnode = bootnode_addr, resolved = %addr, "seeded bootnode (relay)");
+}
+
+/// Quick heuristic: Docker bridge addresses (172.16-31.x.x) on a remote host
+/// are never reachable. True LAN peers (192.168.x, 10.x) we allow optimistically.
+fn is_local_reachable(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            // 172.16.0.0/12 includes Docker bridge networks -- unreachable from outside host
+            if o[0] == 172 && (16..=31).contains(&o[1]) {
+                return false;
+            }
+            // 10.x and 192.168.x are commonly real LANs -- allow optimistically
+            true
+        }
+        std::net::IpAddr::V6(_) => true,
+    }
 }
