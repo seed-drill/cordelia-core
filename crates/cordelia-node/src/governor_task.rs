@@ -8,6 +8,7 @@
 //!
 //! Also handles SwarmEvent2 events: connect/disconnect/ping/identify.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cordelia_governor::Governor;
@@ -45,6 +46,9 @@ pub async fn run_governor_loop(
             }
         }
     }
+
+    // Track outbound dials: addr -> placeholder PeerId (for bootnode replacement)
+    let mut pending_dials: HashMap<Multiaddr, PeerId> = HashMap::new();
 
     let tick_interval = cordelia_governor::TICK_INTERVAL;
     let mut tick_count: u64 = 0;
@@ -87,6 +91,7 @@ pub async fn run_governor_loop(
                     };
 
                     if let Some(addr) = addr {
+                        pending_dials.insert(addr.clone(), *node_id);
                         if let Err(e) = cmd_tx.send(SwarmCommand::Dial(addr.clone())).await {
                             tracing::warn!(%addr, "failed to send dial command: {e}");
                         }
@@ -160,12 +165,28 @@ pub async fn run_governor_loop(
                 match event {
                     Ok(SwarmEvent2::PeerConnected { peer_id, addrs }) => {
                         tracing::info!(%peer_id, "peer connected");
+
+                        // Check if this connection resulted from dialling a
+                        // bootnode placeholder -- if so, replace the placeholder
+                        // PeerId with the real one.
+                        let placeholder = addrs
+                            .iter()
+                            .find_map(|a| pending_dials.remove(a));
+
                         let mut gov = governor.lock().await;
-                        // If this is a known peer, mark connected
-                        if gov.peer_info(&peer_id).is_some() {
+                        if let Some(old_id) = placeholder {
+                            if old_id != peer_id {
+                                gov.replace_node_id(&old_id, peer_id, vec![]);
+                                tracing::info!(
+                                    %peer_id,
+                                    old = %old_id,
+                                    "replaced bootnode placeholder"
+                                );
+                            }
+                            gov.mark_connected(&peer_id);
+                        } else if gov.peer_info(&peer_id).is_some() {
                             gov.mark_connected(&peer_id);
                         } else {
-                            // New inbound peer -- register with governor
                             gov.add_peer(peer_id, addrs.clone(), vec![]);
                             gov.mark_connected(&peer_id);
                         }
@@ -215,12 +236,41 @@ pub async fn run_governor_loop(
                         governor.lock().await.record_activity(&peer_id, Some(rtt_ms));
                         pool.update_rtt(&peer_id, rtt_ms).await;
                     }
-                    Ok(SwarmEvent2::IdentifyReceived { peer_id, listen_addrs, .. }) => {
+                    Ok(SwarmEvent2::IdentifyReceived {
+                        peer_id,
+                        listen_addrs,
+                        ..
+                    }) => {
+                        let mut gov = governor.lock().await;
+
+                        // Check if this peer's listen addrs match a seeded
+                        // bootnode placeholder (different PeerId, same addr)
+                        let placeholder = gov
+                            .all_peers()
+                            .filter(|p| p.node_id != peer_id)
+                            .find(|p| {
+                                p.addrs.iter().any(|a| listen_addrs.contains(a))
+                            })
+                            .map(|p| p.node_id);
+
+                        if let Some(old_id) = placeholder {
+                            gov.replace_node_id(&old_id, peer_id, vec![]);
+                            tracing::info!(
+                                %peer_id,
+                                old = %old_id,
+                                "replaced bootnode placeholder via identify"
+                            );
+                        }
+
                         // Update peer addresses from identify
                         if let Some(handle) = pool.get(&peer_id).await {
                             if handle.addrs != listen_addrs {
                                 let groups = handle.groups.clone();
-                                governor.lock().await.add_peer(peer_id, listen_addrs, groups);
+                                gov.add_peer(
+                                    peer_id,
+                                    listen_addrs,
+                                    groups,
+                                );
                             }
                         }
                     }
