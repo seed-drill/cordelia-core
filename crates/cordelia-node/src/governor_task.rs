@@ -100,7 +100,9 @@ pub async fn run_governor_loop(
             };
 
             if let Some(addr) = addr {
-                // Skip hairpin addresses (same external IP) and unreachable Docker bridge IPs
+                // Skip hairpin addresses (same external IP) and unreachable Docker bridge IPs.
+                // Mark as dial failure so backoff escalates (otherwise governor re-promotes
+                // every tick with no penalty).
                 {
                     let ext = external_addr.read().await;
                     if ext.is_same_nat(addr.ip()) {
@@ -109,6 +111,8 @@ pub async fn run_governor_loop(
                             addr = %addr,
                             "skipping dial: hairpin (same external IP)"
                         );
+                        drop(ext);
+                        governor.lock().await.mark_dial_failed(&node_id);
                         continue;
                     }
                     if crate::external_addr::is_rfc1918(addr.ip()) && !is_local_reachable(addr.ip())
@@ -118,6 +122,8 @@ pub async fn run_governor_loop(
                             addr = %addr,
                             "skipping dial: unreachable private address"
                         );
+                        drop(ext);
+                        governor.lock().await.mark_dial_failed(&node_id);
                         continue;
                     }
                 }
