@@ -1,99 +1,11 @@
 //! Wire message types for all mini-protocols.
+//!
+//! Each protocol uses a separate request/response pair via libp2p request-response.
+//! No more Message wrapper enum -- each behaviour has its own types.
 
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 
 use crate::GroupId;
-
-// ============================================================================
-// Envelope -- wraps all messages for stream demuxing
-// ============================================================================
-
-/// Top-level message envelope sent on QUIC streams.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum Message {
-    // Handshake (stream 0)
-    HandshakePropose(HandshakePropose),
-    HandshakeAccept(HandshakeAccept),
-
-    // Keep-alive
-    Ping(Ping),
-    Pong(Pong),
-
-    // Peer sharing
-    PeerShareRequest(PeerShareRequest),
-    PeerShareResponse(PeerShareResponse),
-
-    // Memory sync
-    SyncRequest(SyncRequest),
-    SyncResponse(SyncResponse),
-
-    // Memory fetch
-    FetchRequest(FetchRequest),
-    FetchResponse(FetchResponse),
-
-    // Memory push ack
-    PushAck(PushAck),
-
-    // Group exchange
-    GroupExchange(GroupExchange),
-    GroupExchangeResponse(GroupExchangeResponse),
-}
-
-// ============================================================================
-// Handshake
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HandshakePropose {
-    pub magic: u32,
-    pub version_min: u16,
-    pub version_max: u16,
-    #[serde(with = "hex_bytes_32")]
-    pub node_id: [u8; 32],
-    pub timestamp: u64,
-    pub groups: Vec<GroupId>,
-    /// Protocol era this node is operating under. Old nodes omit this (defaults to 0).
-    #[serde(default)]
-    pub era: u16,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HandshakeAccept {
-    pub version: u16, // 0 = rejected
-    #[serde(with = "hex_bytes_32")]
-    pub node_id: [u8; 32],
-    pub timestamp: u64,
-    pub groups: Vec<GroupId>,
-    pub reject_reason: Option<String>,
-    /// The remote address we observe for the proposing peer (NAT hairpin avoidance).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_addr: Option<SocketAddr>,
-    /// Protocol era this node is operating under. Old nodes omit this (defaults to 0).
-    #[serde(default)]
-    pub era: u16,
-}
-
-// ============================================================================
-// Keep-Alive
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Ping {
-    pub seq: u64,
-    pub sent_at_ns: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Pong {
-    pub seq: u64,
-    pub sent_at_ns: u64,
-    pub recv_at_ns: u64,
-    /// The remote address we observe for the pinging peer (NAT hairpin avoidance).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_addr: Option<SocketAddr>,
-}
 
 // ============================================================================
 // Peer Sharing
@@ -111,9 +23,10 @@ pub struct PeerShareResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerAddress {
-    #[serde(with = "hex_bytes_32")]
-    pub node_id: [u8; 32],
-    pub addrs: Vec<SocketAddr>,
+    /// PeerId as base58 string (libp2p standard encoding).
+    pub peer_id: String,
+    /// Multiaddr strings.
+    pub addrs: Vec<String>,
     pub last_seen: u64,
     pub groups: Vec<GroupId>,
     /// Node role: "relay", "personal", or "keeper". Empty = unknown (treat as personal).
@@ -179,8 +92,13 @@ pub struct FetchedItem {
 }
 
 // ============================================================================
-// Memory Push Ack
+// Memory Push (pusher = request initiator, receiver sends ack)
 // ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryPushRequest {
+    pub items: Vec<FetchedItem>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushAck {
@@ -205,35 +123,6 @@ pub struct GroupExchangeResponse {
 // ============================================================================
 // Serde helpers
 // ============================================================================
-
-/// Serialize/deserialize [u8; 32] as hex string.
-mod hex_bytes_32 {
-    use serde::{self, Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&hex::encode(bytes))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        let mut arr = [0u8; 32];
-        if bytes.len() != 32 {
-            return Err(serde::de::Error::custom(format!(
-                "expected 32 bytes, got {}",
-                bytes.len()
-            )));
-        }
-        arr.copy_from_slice(&bytes);
-        Ok(arr)
-    }
-}
 
 /// Serialize/deserialize Vec<u8> as base64 string.
 mod base64_bytes {
@@ -261,30 +150,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_handshake_roundtrip() {
-        let msg = Message::HandshakePropose(HandshakePropose {
-            magic: crate::PROTOCOL_MAGIC,
-            version_min: 1,
-            version_max: 1,
-            node_id: [0xAA; 32],
-            timestamp: 1234567890,
-            groups: vec!["seed-drill".into()],
-            era: crate::ERA_0.id,
-        });
-
-        let json = serde_json::to_string(&msg).unwrap();
-        let decoded: Message = serde_json::from_str(&json).unwrap();
-
-        match decoded {
-            Message::HandshakePropose(h) => {
-                assert_eq!(h.magic, crate::PROTOCOL_MAGIC);
-                assert_eq!(h.node_id, [0xAA; 32]);
-            }
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
     fn test_fetched_item_blob_base64() {
         let item = FetchedItem {
             item_id: "test".into(),
@@ -307,32 +172,55 @@ mod tests {
     }
 
     #[test]
-    fn test_all_message_variants_serialize() {
-        let messages = vec![
-            Message::Ping(Ping {
-                seq: 1,
-                sent_at_ns: 123,
-            }),
-            Message::Pong(Pong {
-                seq: 1,
-                sent_at_ns: 123,
-                recv_at_ns: 456,
-                observed_addr: None,
-            }),
-            Message::PeerShareRequest(PeerShareRequest { max_peers: 10 }),
-            Message::SyncRequest(SyncRequest {
-                group_id: "g1".into(),
-                since: None,
-                limit: 100,
-            }),
-            Message::FetchRequest(FetchRequest {
-                item_ids: vec!["a".into(), "b".into()],
-            }),
-        ];
+    fn test_peer_share_roundtrip() {
+        let req = PeerShareRequest { max_peers: 10 };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: PeerShareRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.max_peers, 10);
+    }
 
-        for msg in &messages {
-            let json = serde_json::to_string(msg).unwrap();
-            let _: Message = serde_json::from_str(&json).unwrap();
-        }
+    #[test]
+    fn test_sync_request_roundtrip() {
+        let req = SyncRequest {
+            group_id: "g1".into(),
+            since: None,
+            limit: 100,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: SyncRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.group_id, "g1");
+        assert_eq!(decoded.limit, 100);
+    }
+
+    #[test]
+    fn test_memory_push_request_roundtrip() {
+        let req = MemoryPushRequest {
+            items: vec![FetchedItem {
+                item_id: "x".into(),
+                item_type: "entity".into(),
+                encrypted_blob: vec![42],
+                checksum: "abc".into(),
+                author_id: "russell".into(),
+                group_id: "g1".into(),
+                key_version: 1,
+                parent_id: None,
+                is_copy: false,
+                updated_at: "2026-01-29T00:00:00Z".into(),
+            }],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: MemoryPushRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.items.len(), 1);
+        assert_eq!(decoded.items[0].item_id, "x");
+    }
+
+    #[test]
+    fn test_group_exchange_roundtrip() {
+        let req = GroupExchange {
+            groups: vec!["g1".into(), "g2".into()],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: GroupExchange = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.groups, vec!["g1", "g2"]);
     }
 }

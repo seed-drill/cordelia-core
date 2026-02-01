@@ -2,433 +2,369 @@
 //!
 //! On each tick:
 //!   1. governor.tick() -> GovernorActions
-//!   2. Connect actions: dial peer, handshake, register in pool
-//!   3. Disconnect/demote: close connection, update pool
+//!   2. Connect actions: send Dial via SwarmCommand
+//!   3. Disconnect/demote: send Disconnect via SwarmCommand, update pool
 //!   4. On startup: seed bootnodes as cold, attempt initial connections
+//!
+//! Also handles SwarmEvent2 events: connect/disconnect/ping/identify.
 
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
 use cordelia_governor::Governor;
-use cordelia_storage::Storage;
+use libp2p::{Multiaddr, PeerId};
 use rand::Rng;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::config::BootnodeEntry;
-use crate::external_addr::ExternalAddr;
 use crate::peer_pool::PeerPool;
-use crate::quic_transport::QuicTransport;
+use crate::swarm_task::{SwarmCommand, SwarmEvent2};
 
 #[allow(clippy::too_many_arguments)]
 /// Run the governor loop until shutdown.
 pub async fn run_governor_loop(
     governor: Arc<Mutex<Governor>>,
     pool: PeerPool,
-    transport: Arc<QuicTransport>,
-    storage: Arc<dyn Storage>,
+    cmd_tx: mpsc::Sender<SwarmCommand>,
+    mut event_rx: broadcast::Receiver<SwarmEvent2>,
     bootnodes: Vec<BootnodeEntry>,
-    our_node_id: [u8; 32],
     our_groups: Vec<String>,
-    our_role: String,
-    external_addr: Arc<tokio::sync::RwLock<ExternalAddr>>,
     mut shutdown: broadcast::Receiver<()>,
-    shutdown_tx: broadcast::Sender<()>,
 ) {
     if bootnodes.is_empty() {
         tracing::warn!("no bootnodes configured -- node will only accept inbound connections");
     }
 
-    // Seed bootnodes as cold peers (resolve DNS hostnames to IPs)
-    let mut unresolved_bootnodes: Vec<BootnodeEntry> = Vec::new();
+    // Seed bootnodes as cold peers
     {
         let mut gov = governor.lock().await;
         for boot in &bootnodes {
-            match resolve_bootnode(boot) {
-                Some(addr) => {
-                    seed_bootnode(&mut gov, &boot.addr, addr);
-                }
-                None => {
-                    tracing::warn!(bootnode = &boot.addr, "failed to resolve bootnode address");
-                    unresolved_bootnodes.push(boot.clone());
-                }
+            if let Some(addr) = parse_bootnode_multiaddr(boot) {
+                seed_bootnode(&mut gov, &boot.addr, addr);
+            } else {
+                tracing::warn!(bootnode = &boot.addr, "failed to parse bootnode address");
             }
         }
     }
 
     let tick_interval = cordelia_governor::TICK_INTERVAL;
     let mut tick_count: u64 = 0;
-    // Scheduling intervals sourced from current era
     let group_exchange_every = cordelia_protocol::GROUP_EXCHANGE_TICKS;
     let peer_discovery_every = cordelia_protocol::PEER_DISCOVERY_TICKS;
-    let bootnode_retry_every = cordelia_protocol::BOOTNODE_RETRY_TICKS;
 
     loop {
         tokio::select! {
-            _ = tokio::time::sleep(tick_interval) => {}
+            _ = tokio::time::sleep(tick_interval) => {
+                // Governor tick
+                let actions = {
+                    let mut gov = governor.lock().await;
+                    gov.tick()
+                };
+
+                // Apply state transitions and get disconnected peer list
+                let disconnected = pool.apply_governor_actions(&actions).await;
+
+                // Send disconnect commands to swarm
+                for peer_id in disconnected {
+                    let _ = cmd_tx.send(SwarmCommand::Disconnect(peer_id)).await;
+                }
+
+                // Log transitions
+                for (node_id, from, to) in &actions.transitions {
+                    tracing::debug!(
+                        peer = %node_id,
+                        from,
+                        to,
+                        "peer state transition"
+                    );
+                }
+
+                // Connect to promoted peers
+                for node_id in &actions.connect {
+                    let addr = {
+                        let gov = governor.lock().await;
+                        gov.peer_info(node_id)
+                            .and_then(|p| p.addrs.first().cloned())
+                    };
+
+                    if let Some(addr) = addr {
+                        if let Err(e) = cmd_tx.send(SwarmCommand::Dial(addr.clone())).await {
+                            tracing::warn!(%addr, "failed to send dial command: {e}");
+                        }
+                    }
+                }
+
+                let (warm, hot) = pool.peer_count_by_state().await;
+                tracing::debug!(warm, hot, tick = tick_count, "governor tick complete");
+
+                tick_count += 1;
+
+                // Periodic group exchange with active peers
+                if tick_count.is_multiple_of(group_exchange_every) {
+                    let active_peers = pool.active_peers().await;
+                    let groups = our_groups.clone();
+                    for peer in active_peers {
+                        let cmd_tx = cmd_tx.clone();
+                        let pool = pool.clone();
+                        let groups = groups.clone();
+                        tokio::spawn(async move {
+                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                            let _ = cmd_tx.send(SwarmCommand::SendGroupExchange {
+                                peer: peer.node_id,
+                                request: cordelia_protocol::messages::GroupExchange {
+                                    groups: groups.clone(),
+                                },
+                                response_tx: resp_tx,
+                            }).await;
+
+                            match resp_rx.await {
+                                Ok(Ok(resp)) => {
+                                    let old_intersection = peer.group_intersection.clone();
+                                    pool.update_peer_groups(&peer.node_id, resp.groups).await;
+                                    let new_handle = pool.get(&peer.node_id).await;
+                                    if let Some(h) = new_handle {
+                                        if h.group_intersection != old_intersection {
+                                            tracing::info!(
+                                                peer = %peer.node_id,
+                                                old = ?old_intersection,
+                                                new = ?h.group_intersection,
+                                                "group intersection updated"
+                                            );
+                                        }
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    tracing::debug!(
+                                        peer = %peer.node_id,
+                                        "group exchange failed: {e}"
+                                    );
+                                }
+                                Err(_) => {}
+                            }
+                        });
+                    }
+                }
+
+                // Periodic peer discovery via gossip
+                if tick_count.is_multiple_of(peer_discovery_every) {
+                    let pool2 = pool.clone();
+                    let gov2 = governor.clone();
+                    let cmd_tx2 = cmd_tx.clone();
+                    tokio::spawn(async move {
+                        discover_peers(&pool2, &gov2, &cmd_tx2).await;
+                    });
+                }
+            }
+
+            // Handle swarm events
+            event = event_rx.recv() => {
+                match event {
+                    Ok(SwarmEvent2::PeerConnected { peer_id, addrs }) => {
+                        tracing::info!(%peer_id, "peer connected");
+                        let mut gov = governor.lock().await;
+                        // If this is a known peer, mark connected
+                        if gov.peer_info(&peer_id).is_some() {
+                            gov.mark_connected(&peer_id);
+                        } else {
+                            // New inbound peer -- register with governor
+                            gov.add_peer(peer_id, addrs.clone(), vec![]);
+                            gov.mark_connected(&peer_id);
+                        }
+                        drop(gov);
+
+                        // Insert into pool as Warm
+                        pool.insert(
+                            peer_id,
+                            addrs,
+                            vec![], // groups populated on group exchange
+                            cordelia_governor::PeerState::Warm,
+                            1,     // protocol version
+                            false, // relay status unknown
+                        ).await;
+
+                        // Immediate group exchange after connect
+                        let cmd_tx = cmd_tx.clone();
+                        let pool = pool.clone();
+                        let governor = governor.clone();
+                        let groups = our_groups.clone();
+                        tokio::spawn(async move {
+                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                            let _ = cmd_tx.send(SwarmCommand::SendGroupExchange {
+                                peer: peer_id,
+                                request: cordelia_protocol::messages::GroupExchange {
+                                    groups: groups.clone(),
+                                },
+                                response_tx: resp_tx,
+                            }).await;
+
+                            if let Ok(Ok(resp)) = resp_rx.await {
+                                pool.update_peer_groups(&peer_id, resp.groups.clone()).await;
+                                // Update governor's copy of peer groups
+                                let addrs = pool.get(&peer_id).await
+                                    .map(|h| h.addrs.clone())
+                                    .unwrap_or_default();
+                                governor.lock().await.add_peer(peer_id, addrs, resp.groups);
+                            }
+                        });
+                    }
+                    Ok(SwarmEvent2::PeerDisconnected { peer_id }) => {
+                        tracing::info!(%peer_id, "peer disconnected");
+                        pool.remove(&peer_id).await;
+                        governor.lock().await.mark_disconnected(&peer_id);
+                    }
+                    Ok(SwarmEvent2::PingRtt { peer_id, rtt_ms }) => {
+                        governor.lock().await.record_activity(&peer_id, Some(rtt_ms));
+                        pool.update_rtt(&peer_id, rtt_ms).await;
+                    }
+                    Ok(SwarmEvent2::IdentifyReceived { peer_id, listen_addrs, .. }) => {
+                        // Update peer addresses from identify
+                        if let Some(handle) = pool.get(&peer_id).await {
+                            if handle.addrs != listen_addrs {
+                                let groups = handle.groups.clone();
+                                governor.lock().await.add_peer(peer_id, listen_addrs, groups);
+                            }
+                        }
+                    }
+                    Ok(SwarmEvent2::DialFailure { peer_id }) => {
+                        if let Some(peer_id) = peer_id {
+                            governor.lock().await.mark_dial_failed(&peer_id);
+                        }
+                    }
+                    Ok(SwarmEvent2::ExternalAddrConfirmed { addr }) => {
+                        tracing::info!(%addr, "external address confirmed");
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("governor event receiver lagged by {n}");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+
             _ = shutdown.recv() => {
                 tracing::info!("governor shutting down");
                 return;
             }
         }
-
-        let actions = {
-            let mut gov = governor.lock().await;
-            gov.tick()
-        };
-
-        // Apply state transitions to pool
-        pool.apply_governor_actions(&actions).await;
-
-        // Log transitions
-        for (node_id, from, to) in &actions.transitions {
-            tracing::debug!(
-                peer = hex::encode(node_id),
-                from,
-                to,
-                "peer state transition"
-            );
-        }
-
-        // Connect to promoted peers
-        for node_id in &actions.connect {
-            let node_id = *node_id;
-            let shutdown_tx = shutdown_tx.clone();
-            let addr = {
-                let gov = governor.lock().await;
-                gov.peer_info(&node_id)
-                    .and_then(|p| p.addrs.first().copied())
-            };
-
-            if let Some(addr) = addr {
-                // Skip hairpin addresses (same external IP) and unreachable Docker bridge IPs.
-                // Mark as dial failure so backoff escalates (otherwise governor re-promotes
-                // every tick with no penalty).
-                {
-                    let ext = external_addr.read().await;
-                    if ext.is_same_nat(addr.ip()) {
-                        tracing::debug!(
-                            peer = hex::encode(node_id),
-                            addr = %addr,
-                            "skipping dial: hairpin (same external IP)"
-                        );
-                        drop(ext);
-                        governor.lock().await.mark_dial_failed(&node_id);
-                        continue;
-                    }
-                    if crate::external_addr::is_rfc1918(addr.ip()) && !is_local_reachable(addr.ip())
-                    {
-                        tracing::debug!(
-                            peer = hex::encode(node_id),
-                            addr = %addr,
-                            "skipping dial: unreachable private address"
-                        );
-                        drop(ext);
-                        governor.lock().await.mark_dial_failed(&node_id);
-                        continue;
-                    }
-                }
-                let transport = transport.clone();
-                let pool = pool.clone();
-                let governor = governor.clone();
-                let storage = storage.clone();
-                let our_groups = our_groups.clone();
-                let our_role = our_role.clone();
-                let external_addr = external_addr.clone();
-
-                tokio::spawn(async move {
-                    match transport.dial(addr).await {
-                        Ok(conn) => {
-                            match crate::quic_transport::outbound_handshake(
-                                &conn,
-                                &pool,
-                                our_node_id,
-                                &our_groups,
-                                &external_addr,
-                            )
-                            .await
-                            {
-                                Ok(peer_id) => {
-                                    // Immediate group exchange after handshake (R3-024 fix)
-                                    if let Ok(fresh_groups) =
-                                        crate::mini_protocols::request_group_exchange(
-                                            &conn,
-                                            &our_groups,
-                                        )
-                                        .await
-                                    {
-                                        pool.update_peer_groups(&peer_id, fresh_groups).await;
-                                    }
-
-                                    // Get the peer's advertised groups from the pool
-                                    let peer_groups = pool
-                                        .get(&peer_id)
-                                        .await
-                                        .map(|h| h.groups.clone())
-                                        .unwrap_or_default();
-
-                                    let mut gov = governor.lock().await;
-                                    // Replace fake bootnode ID with real handshake ID
-                                    // relay flag is preserved by replace_node_id
-                                    let was_relay = gov
-                                        .peer_info(&node_id)
-                                        .map(|p| p.is_relay)
-                                        .unwrap_or(false);
-                                    if node_id != peer_id {
-                                        gov.replace_node_id(&node_id, peer_id, peer_groups.clone());
-                                    } else {
-                                        // Update groups even if ID matches
-                                        gov.add_peer(peer_id, vec![addr], peer_groups);
-                                        // Preserve relay flag for bootnodes
-                                        if was_relay {
-                                            gov.set_peer_relay(&peer_id, true);
-                                        }
-                                    }
-                                    gov.mark_connected(&peer_id);
-                                    drop(gov);
-
-                                    // Mark as relay in pool too
-                                    if was_relay {
-                                        pool.set_relay(&peer_id, true).await;
-                                    }
-
-                                    tracing::info!(
-                                        peer = hex::encode(peer_id),
-                                        addr = %addr,
-                                        "connected to peer"
-                                    );
-
-                                    // Spawn keepalive loop to keep governor activity fresh
-                                    let ka_conn = conn.clone();
-                                    let ka_gov = governor.clone();
-                                    let ka_ext = external_addr.clone();
-                                    let ka_shutdown = shutdown_tx.subscribe();
-                                    tokio::spawn(async move {
-                                        crate::mini_protocols::run_keepalive_loop(
-                                            &ka_conn,
-                                            &peer_id,
-                                            &ka_gov,
-                                            &ka_ext,
-                                            ka_shutdown,
-                                        )
-                                        .await;
-                                    });
-
-                                    // Spawn connection handler for the dialled peer
-                                    let pool2 = pool.clone();
-                                    let storage2 = storage.clone();
-                                    let groups2 = our_groups.clone();
-                                    let role2 = our_role.clone();
-                                    let gov2 = governor.clone();
-                                    let ext2 = external_addr.clone();
-                                    tokio::spawn(async move {
-                                        crate::quic_transport::run_connection(
-                                            conn,
-                                            peer_id,
-                                            pool2,
-                                            storage2,
-                                            our_node_id,
-                                            groups2,
-                                            role2,
-                                            Some(gov2),
-                                            ext2,
-                                            false,
-                                        )
-                                        .await;
-                                    });
-                                }
-                                Err(e) => {
-                                    tracing::warn!(addr = %addr, "handshake failed: {e}");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            // Track dial failure for exponential backoff
-                            let mut gov = governor.lock().await;
-                            gov.mark_dial_failed(&node_id);
-                            drop(gov);
-                            tracing::warn!(addr = %addr, "dial failed: {e}");
-                        }
-                    }
-                });
-            }
-        }
-
-        let (warm, hot) = pool.peer_count_by_state().await;
-        tracing::debug!(warm, hot, tick = tick_count, "governor tick complete");
-
-        // Retry unresolved bootnodes periodically
-        tick_count += 1;
-        if !unresolved_bootnodes.is_empty() && tick_count.is_multiple_of(bootnode_retry_every) {
-            let mut gov = governor.lock().await;
-            unresolved_bootnodes.retain(|boot| {
-                match resolve_bootnode(boot) {
-                    Some(addr) => {
-                        seed_bootnode(&mut gov, &boot.addr, addr);
-                        tracing::info!(bootnode = &boot.addr, resolved = %addr, "resolved previously unresolved bootnode");
-                        false // remove from unresolved list
-                    }
-                    None => {
-                        tracing::debug!(bootnode = &boot.addr, "bootnode still unresolvable");
-                        true // keep in unresolved list
-                    }
-                }
-            });
-        }
-
-        // Periodic group exchange with hot peers
-        if tick_count.is_multiple_of(group_exchange_every) {
-            let hot_peers = pool.active_peers().await;
-            let groups = our_groups.clone();
-            for peer in hot_peers {
-                let groups = groups.clone();
-                let pool = pool.clone();
-                tokio::spawn(async move {
-                    match crate::mini_protocols::request_group_exchange(&peer.connection, &groups)
-                        .await
-                    {
-                        Ok(peer_groups) => {
-                            let old_intersection = peer.group_intersection.clone();
-                            pool.update_peer_groups(&peer.node_id, peer_groups).await;
-                            let new_handle = pool.get(&peer.node_id).await;
-                            if let Some(h) = new_handle {
-                                if h.group_intersection != old_intersection {
-                                    tracing::info!(
-                                        peer = hex::encode(peer.node_id),
-                                        old = ?old_intersection,
-                                        new = ?h.group_intersection,
-                                        "group intersection updated"
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::debug!(
-                                peer = hex::encode(peer.node_id),
-                                "group exchange failed: {e}"
-                            );
-                        }
-                    }
-                });
-            }
-        }
-
-        // Periodic peer discovery via gossip
-        if tick_count.is_multiple_of(peer_discovery_every) {
-            let pool2 = pool.clone();
-            let gov2 = governor.clone();
-            let ext2 = external_addr.clone();
-            let nid = our_node_id;
-            tokio::spawn(async move {
-                discover_peers(&pool2, &gov2, &ext2, nid).await;
-            });
-        }
     }
 }
 
 /// Ask a random connected relay peer for its known peers, then register
-/// any new ones in the governor. Filters out hairpin peers (same external IP).
-/// Fire-and-forget; errors are debug-logged.
+/// any new ones in the governor.
 async fn discover_peers(
     pool: &PeerPool,
     governor: &Arc<Mutex<Governor>>,
-    external_addr: &Arc<tokio::sync::RwLock<ExternalAddr>>,
-    our_node_id: [u8; 32],
+    cmd_tx: &mpsc::Sender<SwarmCommand>,
 ) {
     let relays = pool.relay_peers().await;
     if relays.is_empty() {
         return;
     }
 
-    // Pick a random relay
     let idx = rand::thread_rng().gen_range(0..relays.len());
     let relay = &relays[idx];
 
-    let peers = match crate::mini_protocols::request_peers(&relay.connection, 20).await {
-        Ok(p) => p,
-        Err(e) => {
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    let _ = cmd_tx
+        .send(SwarmCommand::SendPeerShareRequest {
+            peer: relay.node_id,
+            request: cordelia_protocol::messages::PeerShareRequest { max_peers: 20 },
+            response_tx: resp_tx,
+        })
+        .await;
+
+    let peers = match resp_rx.await {
+        Ok(Ok(resp)) => resp.peers,
+        Ok(Err(e)) => {
             tracing::debug!(
-                relay = hex::encode(relay.node_id),
+                relay = %relay.node_id,
                 "peer discovery failed: {e}"
             );
             return;
         }
+        Err(_) => return,
     };
 
     if peers.is_empty() {
         return;
     }
 
-    let ext = external_addr.read().await;
     let mut gov = governor.lock().await;
     let mut added = 0u32;
     for pa in &peers {
-        if pa.node_id == our_node_id || pa.addrs.is_empty() {
+        let peer_id: PeerId = match pa.peer_id.parse() {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+        let addrs: Vec<Multiaddr> = pa
+            .addrs
+            .iter()
+            .filter_map(|a| a.parse().ok())
+            .collect();
+        if addrs.is_empty() {
             continue;
         }
-        // Filter hairpin candidates: skip peers whose every address matches our
-        // external IP. RFC1918 addresses always pass through (is_same_nat returns false).
-        let all_hairpin = pa.addrs.iter().all(|a| ext.is_same_nat(a.ip()));
-        if all_hairpin {
-            tracing::debug!(
-                peer = hex::encode(pa.node_id),
-                "skipping hairpin peer (same external IP)"
-            );
-            continue;
-        }
-        gov.add_peer(pa.node_id, pa.addrs.clone(), pa.groups.clone());
+        gov.add_peer(peer_id, addrs, pa.groups.clone());
         if pa.role == "relay" {
-            gov.set_peer_relay(&pa.node_id, true);
+            gov.set_peer_relay(&peer_id, true);
         }
         added += 1;
     }
     drop(gov);
-    drop(ext);
 
     if added > 0 {
         tracing::info!(
-            relay = hex::encode(relay.node_id),
+            relay = %relay.node_id,
             discovered = added,
             "peer discovery: registered new peers via gossip"
         );
     }
 }
 
-/// Try to resolve a bootnode address to a SocketAddr.
-fn resolve_bootnode(boot: &BootnodeEntry) -> Option<SocketAddr> {
-    boot.addr.parse::<SocketAddr>().ok().or_else(|| {
-        boot.addr
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut addrs| addrs.next())
-    })
+/// Parse a bootnode address string into a Multiaddr.
+/// Supports both raw Multiaddr format (/ip4/.../udp/.../quic-v1) and
+/// legacy host:port format (converted to /ip4/HOST/udp/PORT/quic-v1).
+fn parse_bootnode_multiaddr(boot: &BootnodeEntry) -> Option<Multiaddr> {
+    // Try Multiaddr first
+    if let Ok(addr) = boot.addr.parse::<Multiaddr>() {
+        return Some(addr);
+    }
+
+    // Fall back to host:port -> Multiaddr conversion
+    use std::net::ToSocketAddrs;
+    let socket_addr = boot
+        .addr
+        .parse::<std::net::SocketAddr>()
+        .ok()
+        .or_else(|| boot.addr.to_socket_addrs().ok().and_then(|mut a| a.next()))?;
+
+    let multiaddr: Multiaddr = format!(
+        "/ip4/{}/udp/{}/quic-v1",
+        socket_addr.ip(),
+        socket_addr.port()
+    )
+    .parse()
+    .ok()?;
+
+    Some(multiaddr)
 }
 
 /// Seed a resolved bootnode into the governor as a cold relay peer.
-fn seed_bootnode(gov: &mut Governor, bootnode_addr: &str, addr: SocketAddr) {
-    let mut id = [0u8; 32];
-    let addr_bytes = addr.to_string();
-    let hash = cordelia_crypto::sha256_hex(addr_bytes.as_bytes());
+/// Uses a deterministic PeerId derived from the address (replaced on handshake).
+fn seed_bootnode(gov: &mut Governor, bootnode_addr: &str, addr: Multiaddr) {
+    // Generate a deterministic PeerId from the address hash.
+    // This gets replaced with the real PeerId on first connect (via identify).
+    let hash = cordelia_crypto::sha256_hex(bootnode_addr.as_bytes());
     let hash_bytes = hex::decode(&hash).unwrap_or_default();
-    let len = id.len().min(hash_bytes.len());
-    id[..len].copy_from_slice(&hash_bytes[..len]);
-    gov.add_peer(id, vec![addr], vec![]);
-    gov.set_peer_relay(&id, true);
-    tracing::info!(bootnode = bootnode_addr, resolved = %addr, "seeded bootnode (relay)");
-}
+    let mut seed = [0u8; 32];
+    let len = seed.len().min(hash_bytes.len());
+    seed[..len].copy_from_slice(&hash_bytes[..len]);
 
-/// Quick heuristic: Docker bridge addresses (172.16-31.x.x) on a remote host
-/// are never reachable. True LAN peers (192.168.x, 10.x) we allow optimistically.
-fn is_local_reachable(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            let o = v4.octets();
-            // 172.16.0.0/12 includes Docker bridge networks -- unreachable from outside host
-            if o[0] == 172 && (16..=31).contains(&o[1]) {
-                return false;
-            }
-            // 10.x and 192.168.x are commonly real LANs -- allow optimistically
-            true
-        }
-        std::net::IpAddr::V6(_) => true,
-    }
+    let keypair = libp2p::identity::Keypair::ed25519_from_bytes(seed)
+        .expect("valid ed25519 seed");
+    let placeholder_id = PeerId::from(keypair.public());
+
+    gov.add_peer(placeholder_id, vec![addr.clone()], vec![]);
+    gov.set_peer_relay(&placeholder_id, true);
+    tracing::info!(bootnode = bootnode_addr, addr = %addr, "seeded bootnode (relay)");
 }

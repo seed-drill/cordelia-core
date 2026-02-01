@@ -1,6 +1,6 @@
 [package]
 name = "cordelia-node"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Cordelia P2P memory replication node"
 
@@ -16,7 +16,7 @@ cordelia-storage = { workspace = true }
 cordelia-crypto = { workspace = true }
 cordelia-api = { workspace = true }
 tokio = { workspace = true }
-quinn = { workspace = true }
+libp2p = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -27,8 +27,6 @@ anyhow = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
 reqwest = { workspace = true }
-bytes = { workspace = true }
-tokio-util = { workspace = true }
 chrono = { workspace = true }
 axum = { workspace = true }
 hyper = { workspace = true }

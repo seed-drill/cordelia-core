@@ -1,14 +1,11 @@
-//! Cordelia Protocol -- wire types, message codec, mini-protocols.
+//! Cordelia Protocol -- wire types, message types, protocol eras.
 //!
-//! QUIC between peers. One bidirectional stream per mini-protocol.
-//! 4-byte big-endian length prefix + serde JSON.
+//! libp2p request-response JSON behaviours between peers.
+//! Each mini-protocol is a separate request-response behaviour.
 
-pub mod codec;
 pub mod era;
 pub mod messages;
-pub mod tls;
 
-pub use codec::MessageCodec;
 pub use era::{ProtocolEra, CURRENT_ERA, ERA_0};
 pub use messages::*;
 
@@ -72,8 +69,8 @@ pub const BACKOFF_SATURATION_COUNT: u32 = ERA_0.backoff_saturation_count;
 /// Group identifier (opaque string).
 pub type GroupId = String;
 
-/// Node identifier (SHA-256 of Ed25519 pubkey).
-pub type NodeId = [u8; 32];
+/// Node identifier -- libp2p PeerId (multihash of Ed25519 public key).
+pub type NodeId = libp2p::PeerId;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {

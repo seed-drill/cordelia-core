@@ -4,9 +4,9 @@
 //! Manages Cold → Warm → Hot peer lifecycle with adversarial demotion.
 
 use cordelia_protocol::{GroupId, NodeId, ERA_0};
+use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 /// Governor tick interval (sourced from current era).
@@ -28,7 +28,7 @@ pub enum DialPolicy {
     All,
     /// Only dial peers marked as relays or bootnodes (personal node behaviour).
     RelaysOnly,
-    /// Only dial specific trusted relay node IDs (keeper behaviour).
+    /// Only dial specific trusted relay PeerIds (keeper behaviour).
     TrustedOnly(Vec<NodeId>),
 }
 
@@ -91,7 +91,7 @@ impl PeerState {
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
     pub node_id: NodeId,
-    pub addrs: Vec<SocketAddr>,
+    pub addrs: Vec<Multiaddr>,
     pub state: PeerState,
     pub groups: Vec<GroupId>,
     pub rtt_ms: Option<f64>,
@@ -106,7 +106,7 @@ pub struct PeerInfo {
 }
 
 impl PeerInfo {
-    pub fn new(node_id: NodeId, addrs: Vec<SocketAddr>, groups: Vec<GroupId>) -> Self {
+    pub fn new(node_id: NodeId, addrs: Vec<Multiaddr>, groups: Vec<GroupId>) -> Self {
         Self {
             node_id,
             addrs,
@@ -183,7 +183,7 @@ impl Governor {
     }
 
     /// Add or update a known peer.
-    pub fn add_peer(&mut self, node_id: NodeId, addrs: Vec<SocketAddr>, groups: Vec<GroupId>) {
+    pub fn add_peer(&mut self, node_id: NodeId, addrs: Vec<Multiaddr>, groups: Vec<GroupId>) {
         self.peers
             .entry(node_id)
             .and_modify(|p| {
@@ -223,7 +223,7 @@ impl Governor {
     }
 
     /// Mark peer as disconnected (back to Cold) with reconnect backoff.
-    /// Called when QUIC connection drops to keep governor in sync with pool.
+    /// Called when connection drops to keep governor in sync with pool.
     /// Tracks disconnect count for exponential backoff: min(2^count * 30s, 15min).
     pub fn mark_disconnected(&mut self, node_id: &NodeId) {
         if let Some(peer) = self.peers.get_mut(node_id) {
@@ -259,9 +259,7 @@ impl Governor {
         Duration::from_secs(secs.min(max))
     }
 
-    /// Replace a peer's node ID (e.g. after handshake reveals real identity).
-    /// Moves all peer state from `old` to `new`. Returns true if replaced.
-    /// Replace a peer's node ID (e.g. after handshake reveals real identity).
+    /// Replace a peer's node ID (e.g. after identify reveals real identity).
     /// Moves all peer state from `old` to `new`, preserving relay flag. Returns true if replaced.
     pub fn replace_node_id(&mut self, old: &NodeId, new: NodeId, groups: Vec<GroupId>) -> bool {
         if let Some(mut peer) = self.peers.remove(old) {
@@ -439,7 +437,6 @@ impl Governor {
             .map(|p| (p.node_id, p.has_group_overlap(&self.our_groups)))
             .collect::<Vec<_>>()
             .into_iter()
-            // Prefer peers with group overlap
             .sorted_by_key(|(_, overlap)| std::cmp::Reverse(*overlap))
             .into_iter()
             .map(|(id, _)| id)
@@ -653,18 +650,22 @@ impl<I: Iterator> SortedBy for I {}
 mod tests {
     use super::*;
 
-    fn make_node_id(byte: u8) -> NodeId {
-        [byte; 32]
+    fn make_peer_id(byte: u8) -> NodeId {
+        // Generate deterministic PeerIds from a byte
+        let mut seed = [0u8; 32];
+        seed[0] = byte;
+        let kp = libp2p::identity::Keypair::ed25519_from_bytes(seed).unwrap();
+        kp.public().to_peer_id()
     }
 
-    fn make_addr() -> Vec<SocketAddr> {
-        vec!["127.0.0.1:9474".parse().unwrap()]
+    fn make_addr() -> Vec<Multiaddr> {
+        vec!["/ip4/127.0.0.1/udp/9474/quic-v1".parse().unwrap()]
     }
 
     #[test]
     fn test_add_peer() {
         let mut gov = Governor::new(GovernorTargets::default(), vec!["g1".into()]);
-        gov.add_peer(make_node_id(1), make_addr(), vec!["g1".into()]);
+        gov.add_peer(make_peer_id(1), make_addr(), vec!["g1".into()]);
         assert_eq!(gov.counts(), (0, 0, 1, 0));
     }
 
@@ -672,7 +673,7 @@ mod tests {
     fn test_promote_to_warm() {
         let mut gov = Governor::new(GovernorTargets::default(), vec!["g1".into()]);
         for i in 0..15 {
-            gov.add_peer(make_node_id(i), make_addr(), vec!["g1".into()]);
+            gov.add_peer(make_peer_id(i), make_addr(), vec!["g1".into()]);
         }
 
         let actions = gov.tick();
@@ -690,7 +691,7 @@ mod tests {
         let mut gov = Governor::new(targets, vec!["g1".into()]);
 
         for i in 0..5 {
-            let id = make_node_id(i);
+            let id = make_peer_id(i);
             gov.add_peer(id, make_addr(), vec!["g1".into()]);
             gov.mark_connected(&id);
         }
@@ -708,7 +709,7 @@ mod tests {
     #[test]
     fn test_ban_peer() {
         let mut gov = Governor::new(GovernorTargets::default(), vec![]);
-        let id = make_node_id(1);
+        let id = make_peer_id(1);
         gov.add_peer(id, make_addr(), vec![]);
 
         gov.ban_peer(&id, "protocol violation".into());
@@ -726,8 +727,8 @@ mod tests {
     fn test_hot_peers_for_group() {
         let mut gov = Governor::new(GovernorTargets::default(), vec!["g1".into(), "g2".into()]);
 
-        let id1 = make_node_id(1);
-        let id2 = make_node_id(2);
+        let id1 = make_peer_id(1);
+        let id2 = make_peer_id(2);
         gov.add_peer(id1, make_addr(), vec!["g1".into()]);
         gov.add_peer(id2, make_addr(), vec!["g2".into()]);
 
@@ -743,8 +744,8 @@ mod tests {
     #[test]
     fn test_replace_node_id() {
         let mut gov = Governor::new(GovernorTargets::default(), vec!["g1".into()]);
-        let old_id = make_node_id(99);
-        let new_id = make_node_id(1);
+        let old_id = make_peer_id(99);
+        let new_id = make_peer_id(1);
         gov.add_peer(old_id, make_addr(), vec![]);
 
         assert!(gov.peer_info(&old_id).is_some());
@@ -762,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_peer_score() {
-        let mut peer = PeerInfo::new(make_node_id(1), make_addr(), vec![]);
+        let mut peer = PeerInfo::new(make_peer_id(1), make_addr(), vec![]);
         peer.connected_since = Some(Instant::now() - Duration::from_secs(100));
         peer.items_delivered = 50;
         peer.rtt_ms = Some(10.0);
@@ -774,7 +775,7 @@ mod tests {
     #[test]
     fn test_mark_disconnected() {
         let mut gov = Governor::new(GovernorTargets::default(), vec!["g1".into()]);
-        let id = make_node_id(1);
+        let id = make_peer_id(1);
         gov.add_peer(id, make_addr(), vec!["g1".into()]);
 
         // Cold peer: mark_disconnected should be a no-op
@@ -820,7 +821,7 @@ mod tests {
         };
         let mut gov = Governor::new(targets, vec!["g1".into()]);
 
-        let id = make_node_id(1);
+        let id = make_peer_id(1);
         gov.add_peer(id, make_addr(), vec!["g1".into()]);
 
         // Connect then disconnect
@@ -843,7 +844,7 @@ mod tests {
         };
         let mut gov = Governor::new(targets, vec!["g1".into()]);
 
-        let id = make_node_id(1);
+        let id = make_peer_id(1);
         gov.add_peer(id, make_addr(), vec!["g1".into()]);
 
         // Connect then disconnect, but set last_disconnected in the past
@@ -869,7 +870,7 @@ mod tests {
         };
         let mut gov = Governor::new(targets, vec!["g1".into()]);
 
-        let id = make_node_id(1);
+        let id = make_peer_id(1);
         gov.add_peer(id, make_addr(), vec!["g1".into()]);
         gov.mark_connected(&id);
 
@@ -894,24 +895,27 @@ mod tests {
         };
         let mut gov = Governor::new(targets, vec!["g1".into()]);
 
+        let id0 = make_peer_id(0);
+        let id1 = make_peer_id(1);
+        let id2 = make_peer_id(2);
+
         // Create 3 warm peers, promote 2 to hot
-        for i in 0..3 {
-            let id = make_node_id(i);
+        for id in [id0, id1, id2] {
             gov.add_peer(id, make_addr(), vec!["g1".into()]);
             gov.mark_connected(&id);
         }
         // Force two to Hot
-        gov.peers.get_mut(&make_node_id(0)).unwrap().state = PeerState::Hot;
-        gov.peers.get_mut(&make_node_id(1)).unwrap().state = PeerState::Hot;
+        gov.peers.get_mut(&id0).unwrap().state = PeerState::Hot;
+        gov.peers.get_mut(&id1).unwrap().state = PeerState::Hot;
 
         // Simulate dead timeout on peer 0 so reap_dead demotes it
-        gov.peers.get_mut(&make_node_id(0)).unwrap().last_activity =
+        gov.peers.get_mut(&id0).unwrap().last_activity =
             Instant::now() - Duration::from_secs(100);
 
         let actions = gov.tick();
 
         // Peer 0 should have been demoted Hot -> Warm
-        let peer0 = gov.peer_info(&make_node_id(0)).unwrap();
+        let peer0 = gov.peer_info(&id0).unwrap();
         assert_eq!(
             peer0.state,
             PeerState::Warm,
@@ -919,18 +923,11 @@ mod tests {
         );
         assert!(peer0.demoted_at.is_some(), "demoted_at should be set");
 
-        // Despite hot_min=2 and only 1 hot, peer 0 should NOT have been re-promoted
-        // because of hysteresis (demoted_at within DEAD_TIMEOUT)
-        let _hot_count = actions
-            .transitions
-            .iter()
-            .filter(|(_, _, to)| to == "hot")
-            .count();
-        // Peer 2 (warm, never demoted) could be promoted, but peer 0 must not be
+        // Peer 0 should NOT have been re-promoted because of hysteresis
         let peer0_promoted = actions
             .transitions
             .iter()
-            .any(|(id, _, to)| *id == make_node_id(0) && to == "hot");
+            .any(|(id, _, to)| *id == id0 && to == "hot");
         assert!(
             !peer0_promoted,
             "recently demoted peer must not be re-promoted"
@@ -945,8 +942,8 @@ mod tests {
         };
         let mut gov = Governor::with_dial_policy(targets, vec!["g1".into()], DialPolicy::All);
 
-        let relay_id = make_node_id(1);
-        let personal_id = make_node_id(2);
+        let relay_id = make_peer_id(1);
+        let personal_id = make_peer_id(2);
         gov.add_peer(relay_id, make_addr(), vec!["g1".into()]);
         gov.set_peer_relay(&relay_id, true);
         gov.add_peer(personal_id, make_addr(), vec!["g1".into()]);
@@ -971,8 +968,8 @@ mod tests {
         let mut gov =
             Governor::with_dial_policy(targets, vec!["g1".into()], DialPolicy::RelaysOnly);
 
-        let relay_id = make_node_id(1);
-        let personal_id = make_node_id(2);
+        let relay_id = make_peer_id(1);
+        let personal_id = make_peer_id(2);
         gov.add_peer(relay_id, make_addr(), vec!["g1".into()]);
         gov.set_peer_relay(&relay_id, true);
         gov.add_peer(personal_id, make_addr(), vec!["g1".into()]);
@@ -990,8 +987,8 @@ mod tests {
 
     #[test]
     fn test_dial_policy_trusted_only() {
-        let trusted_id = make_node_id(1);
-        let untrusted_id = make_node_id(2);
+        let trusted_id = make_peer_id(1);
+        let untrusted_id = make_peer_id(2);
 
         let targets = GovernorTargets {
             warm_min: 5,
@@ -1022,8 +1019,8 @@ mod tests {
     #[test]
     fn test_relay_flag_preserved_on_replace() {
         let mut gov = Governor::new(GovernorTargets::default(), vec!["g1".into()]);
-        let old_id = make_node_id(99);
-        let new_id = make_node_id(1);
+        let old_id = make_peer_id(99);
+        let new_id = make_peer_id(1);
         gov.add_peer(old_id, make_addr(), vec![]);
         gov.set_peer_relay(&old_id, true);
 
@@ -1043,7 +1040,7 @@ mod tests {
         };
         let mut gov = Governor::new(targets, vec!["g1".into()]);
 
-        let id = make_node_id(1);
+        let id = make_peer_id(1);
         gov.add_peer(id, make_addr(), vec!["g1".into()]);
         gov.mark_connected(&id);
 

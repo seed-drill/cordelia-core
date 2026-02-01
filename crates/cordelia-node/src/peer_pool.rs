@@ -1,24 +1,26 @@
 //! Peer pool -- thread-safe registry of active peer connections.
 //!
-//! Maps NodeId → PeerHandle (quinn::Connection + metadata).
-//! Used by mini-protocols, governor task, and replication task.
+//! Maps NodeId → PeerHandle (metadata only, no connection handles).
+//! The Swarm task owns all connections; this pool tracks peer state.
 
 use cordelia_governor::{GovernorActions, PeerState};
 use cordelia_protocol::{GroupId, NodeId};
+use libp2p::Multiaddr;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Handle to a connected peer.
+/// Handle to a connected peer (metadata only).
 #[derive(Debug, Clone)]
 pub struct PeerHandle {
-    pub connection: quinn::Connection,
     pub node_id: NodeId,
+    pub addrs: Vec<Multiaddr>,
     pub state: PeerState,
     pub groups: Vec<GroupId>,
     pub group_intersection: Vec<GroupId>,
-    /// Negotiated protocol version from handshake.
-    /// Used for future version-specific message handling (R3-022).
+    /// RTT from libp2p ping, updated periodically.
+    pub rtt_ms: Option<f64>,
+    /// Negotiated protocol version from identify.
     pub protocol_version: u16,
     /// Whether this peer advertises itself as a relay.
     pub is_relay: bool,
@@ -39,11 +41,11 @@ impl PeerPool {
         }
     }
 
-    /// Insert a new peer connection after successful handshake.
+    /// Insert a new peer after successful identify exchange.
     pub async fn insert(
         &self,
         node_id: NodeId,
-        connection: quinn::Connection,
+        addrs: Vec<Multiaddr>,
         peer_groups: Vec<GroupId>,
         state: PeerState,
         protocol_version: u16,
@@ -56,11 +58,12 @@ impl PeerPool {
             .collect();
 
         let handle = PeerHandle {
-            connection,
             node_id,
+            addrs,
             state,
             groups: peer_groups,
             group_intersection,
+            rtt_ms: None,
             protocol_version,
             is_relay,
         };
@@ -151,6 +154,14 @@ impl PeerPool {
         }
     }
 
+    /// Update a peer's RTT (from ping events).
+    pub async fn update_rtt(&self, node_id: &NodeId, rtt_ms: f64) {
+        if let Some(handle) = self.inner.write().await.get_mut(node_id) {
+            handle.rtt_ms = Some(rtt_ms);
+        }
+    }
+
+    #[allow(dead_code)]
     /// Set a peer's relay flag.
     pub async fn set_relay(&self, node_id: &NodeId, is_relay: bool) {
         if let Some(handle) = self.inner.write().await.get_mut(node_id) {
@@ -166,9 +177,11 @@ impl PeerPool {
         }
     }
 
-    /// Apply governor actions: update states and disconnect peers.
-    pub async fn apply_governor_actions(&self, actions: &GovernorActions) {
+    /// Apply governor actions: update states and remove disconnected peers.
+    /// Note: actual connection teardown is handled by the swarm task via SwarmCommand::Disconnect.
+    pub async fn apply_governor_actions(&self, actions: &GovernorActions) -> Vec<NodeId> {
         let mut pool = self.inner.write().await;
+        let mut disconnected = Vec::new();
 
         // Apply state transitions
         for (node_id, from, to) in &actions.transitions {
@@ -180,7 +193,7 @@ impl PeerPool {
                 }
             } else {
                 tracing::warn!(
-                    peer = hex::encode(node_id),
+                    peer = %node_id,
                     from,
                     to,
                     "governor transition for peer not in pool"
@@ -188,14 +201,14 @@ impl PeerPool {
             }
         }
 
-        // Disconnect peers
+        // Remove disconnected peers from pool (caller sends SwarmCommand::Disconnect)
         for node_id in &actions.disconnect {
-            if let Some(handle) = pool.remove(node_id) {
-                handle
-                    .connection
-                    .close(quinn::VarInt::from_u32(0), b"governor disconnect");
+            if pool.remove(node_id).is_some() {
+                disconnected.push(*node_id);
             }
         }
+
+        disconnected
     }
 
     /// Get a random hot peer for a group (for anti-entropy sync).
@@ -220,13 +233,11 @@ impl PeerPool {
             .await
             .values()
             .map(|h| {
-                let addr = h.connection.remote_address().to_string();
-                let rtt = h.connection.rtt();
                 cordelia_api::PeerDetail {
-                    node_id: hex::encode(h.node_id),
-                    addrs: vec![addr],
+                    node_id: h.node_id.to_base58(),
+                    addrs: h.addrs.iter().map(|a| a.to_string()).collect(),
                     state: h.state.name().to_string(),
-                    rtt_ms: Some(rtt.as_secs_f64() * 1000.0),
+                    rtt_ms: h.rtt_ms,
                     items_delivered: 0, // TODO: track this per-connection
                     groups: h.groups.clone(),
                     protocol_version: h.protocol_version,
