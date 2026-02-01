@@ -57,12 +57,10 @@ pub async fn run_governor_loop(
 
     let tick_interval = cordelia_governor::TICK_INTERVAL;
     let mut tick_count: u64 = 0;
-    // Exchange groups every 6 ticks (60s at 10s tick interval)
-    const GROUP_EXCHANGE_EVERY: u64 = 6;
-    // Discover new peers via gossip every 3 ticks (30s at 10s tick interval)
-    const PEER_DISCOVERY_EVERY: u64 = 3;
-    // Retry unresolved bootnodes every 30 ticks (5 minutes)
-    const BOOTNODE_RETRY_EVERY: u64 = 30;
+    // Scheduling intervals sourced from current era
+    let group_exchange_every = cordelia_protocol::GROUP_EXCHANGE_TICKS;
+    let peer_discovery_every = cordelia_protocol::PEER_DISCOVERY_TICKS;
+    let bootnode_retry_every = cordelia_protocol::BOOTNODE_RETRY_TICKS;
 
     loop {
         tokio::select! {
@@ -233,7 +231,7 @@ pub async fn run_governor_loop(
 
         // Retry unresolved bootnodes periodically
         tick_count += 1;
-        if !unresolved_bootnodes.is_empty() && tick_count.is_multiple_of(BOOTNODE_RETRY_EVERY) {
+        if !unresolved_bootnodes.is_empty() && tick_count.is_multiple_of(bootnode_retry_every) {
             let mut gov = governor.lock().await;
             unresolved_bootnodes.retain(|boot| {
                 match resolve_bootnode(boot) {
@@ -251,7 +249,7 @@ pub async fn run_governor_loop(
         }
 
         // Periodic group exchange with hot peers
-        if tick_count.is_multiple_of(GROUP_EXCHANGE_EVERY) {
+        if tick_count.is_multiple_of(group_exchange_every) {
             let hot_peers = pool.active_peers().await;
             let groups = our_groups.clone();
             for peer in hot_peers {
@@ -288,7 +286,7 @@ pub async fn run_governor_loop(
         }
 
         // Periodic peer discovery via gossip
-        if tick_count.is_multiple_of(PEER_DISCOVERY_EVERY) {
+        if tick_count.is_multiple_of(peer_discovery_every) {
             let pool2 = pool.clone();
             let gov2 = governor.clone();
             let ext2 = external_addr.clone();

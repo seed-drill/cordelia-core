@@ -31,7 +31,7 @@ impl ReplicationStrategy {
     pub fn sync_interval_secs(&self, moderate_secs: u64, taciturn_secs: u64) -> Option<u64> {
         match self {
             // Chatty: real-time, no periodic sync needed (but run fast interval for safety)
-            ReplicationStrategy::EagerPush => Some(60),
+            ReplicationStrategy::EagerPush => Some(cordelia_protocol::EAGER_PUSH_INTERVAL_SECS),
             ReplicationStrategy::NotifyAndFetch => Some(moderate_secs),
             ReplicationStrategy::Passive => Some(taciturn_secs),
         }
@@ -50,10 +50,10 @@ pub struct ReplicationConfig {
 impl Default for ReplicationConfig {
     fn default() -> Self {
         Self {
-            sync_interval_moderate_secs: 300,
-            sync_interval_taciturn_secs: 900,
-            tombstone_retention_days: 7,
-            max_batch_size: 100,
+            sync_interval_moderate_secs: cordelia_protocol::SYNC_INTERVAL_MODERATE_SECS,
+            sync_interval_taciturn_secs: cordelia_protocol::SYNC_INTERVAL_TACITURN_SECS,
+            tombstone_retention_days: cordelia_protocol::TOMBSTONE_RETENTION_DAYS,
+            max_batch_size: cordelia_protocol::MAX_BATCH_SIZE,
         }
     }
 }

@@ -57,6 +57,28 @@ pub struct ProtocolEra {
     pub max_message_bytes: usize,
     /// Maximum batch size for memory fetch.
     pub max_batch_size: u32,
+    /// Pong response timeout in seconds.
+    pub pong_timeout_secs: u64,
+
+    // -- Replication --
+    /// Eager-push anti-entropy interval in seconds (chatty groups).
+    pub eager_push_interval_secs: u64,
+    /// Anti-entropy sync interval for moderate groups (seconds).
+    pub sync_interval_moderate_secs: u64,
+    /// Anti-entropy sync interval for taciturn groups (seconds).
+    pub sync_interval_taciturn_secs: u64,
+    /// Days to retain tombstones before garbage collection.
+    pub tombstone_retention_days: u32,
+
+    // -- Governor scheduling (in ticks, not seconds) --
+    /// Group exchange interval in governor ticks.
+    pub group_exchange_ticks: u64,
+    /// Peer discovery interval in governor ticks.
+    pub peer_discovery_ticks: u64,
+    /// Bootnode retry interval in governor ticks.
+    pub bootnode_retry_ticks: u64,
+    /// Reconnect backoff exponent saturation: min(2^count, 2^cap).
+    pub backoff_saturation_count: u32,
 }
 
 impl ProtocolEra {
@@ -99,6 +121,19 @@ pub const ERA_0: ProtocolEra = ProtocolEra {
     quic_idle_timeout_secs: 300,
     max_message_bytes: 16 * 1024 * 1024,
     max_batch_size: 100,
+    pong_timeout_secs: 10,
+
+    // Replication
+    eager_push_interval_secs: 60,
+    sync_interval_moderate_secs: 300,
+    sync_interval_taciturn_secs: 900,
+    tombstone_retention_days: 7,
+
+    // Governor scheduling
+    group_exchange_ticks: 6,   // 60s at 10s tick
+    peer_discovery_ticks: 3,   // 30s at 10s tick
+    bootnode_retry_ticks: 30,  // 5min at 10s tick
+    backoff_saturation_count: 5,
 };
 
 /// The current active era. When HFC is implemented, this will be determined

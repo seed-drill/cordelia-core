@@ -254,7 +254,7 @@ impl Governor {
         }
         let base = ERA_0.reconnect_backoff_base_secs;
         let max = ERA_0.reconnect_backoff_max_secs;
-        let secs = base.saturating_mul(1u64 << disconnect_count.min(5));
+        let secs = base.saturating_mul(1u64 << disconnect_count.min(ERA_0.backoff_saturation_count));
         Duration::from_secs(secs.min(max))
     }
 

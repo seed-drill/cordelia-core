@@ -34,10 +34,10 @@ async fn read_message(recv: &mut quinn::RecvStream) -> Result<Message, BoxError>
     recv.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
 
-    if len > 16 * 1024 * 1024 {
+    if len > cordelia_protocol::MAX_MESSAGE_BYTES {
         return Err(Box::new(ProtocolError::MessageTooLarge {
             size: len,
-            max: 16 * 1024 * 1024,
+            max: cordelia_protocol::MAX_MESSAGE_BYTES,
         }));
     }
 
@@ -331,7 +331,7 @@ pub async fn run_keepalive_loop(
 
         // Wait for pong with timeout
         let pong_result =
-            tokio::time::timeout(std::time::Duration::from_secs(10), read_message(&mut recv)).await;
+            tokio::time::timeout(std::time::Duration::from_secs(cordelia_protocol::PONG_TIMEOUT_SECS), read_message(&mut recv)).await;
 
         match pong_result {
             Ok(Ok(Message::Pong(pong))) => {

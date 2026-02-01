@@ -8,8 +8,8 @@ use tokio_util::codec::{Decoder, Encoder};
 use crate::messages::Message;
 use crate::ProtocolError;
 
-/// Maximum message size: 16 MB (generous for batch fetches with large blobs).
-const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+/// Maximum message size (sourced from current era).
+const MAX_MESSAGE_SIZE: usize = crate::ERA_0.max_message_bytes;
 
 /// Length prefix size in bytes.
 const LENGTH_PREFIX_SIZE: usize = 4;

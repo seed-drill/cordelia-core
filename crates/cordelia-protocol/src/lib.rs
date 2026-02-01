@@ -36,6 +36,36 @@ pub const PEER_SHARE_INTERVAL_SECS: u64 = ERA_0.peer_share_interval_secs;
 /// Maximum batch size for memory fetch (sourced from current era).
 pub const MAX_BATCH_SIZE: u32 = ERA_0.max_batch_size;
 
+/// Maximum message size in bytes (sourced from current era).
+pub const MAX_MESSAGE_BYTES: usize = ERA_0.max_message_bytes;
+
+/// Pong response timeout in seconds (sourced from current era).
+pub const PONG_TIMEOUT_SECS: u64 = ERA_0.pong_timeout_secs;
+
+/// Eager-push anti-entropy interval in seconds (sourced from current era).
+pub const EAGER_PUSH_INTERVAL_SECS: u64 = ERA_0.eager_push_interval_secs;
+
+/// Anti-entropy sync interval for moderate groups (sourced from current era).
+pub const SYNC_INTERVAL_MODERATE_SECS: u64 = ERA_0.sync_interval_moderate_secs;
+
+/// Anti-entropy sync interval for taciturn groups (sourced from current era).
+pub const SYNC_INTERVAL_TACITURN_SECS: u64 = ERA_0.sync_interval_taciturn_secs;
+
+/// Tombstone retention in days (sourced from current era).
+pub const TOMBSTONE_RETENTION_DAYS: u32 = ERA_0.tombstone_retention_days;
+
+/// Group exchange interval in governor ticks (sourced from current era).
+pub const GROUP_EXCHANGE_TICKS: u64 = ERA_0.group_exchange_ticks;
+
+/// Peer discovery interval in governor ticks (sourced from current era).
+pub const PEER_DISCOVERY_TICKS: u64 = ERA_0.peer_discovery_ticks;
+
+/// Bootnode retry interval in governor ticks (sourced from current era).
+pub const BOOTNODE_RETRY_TICKS: u64 = ERA_0.bootnode_retry_ticks;
+
+/// Reconnect backoff saturation count (sourced from current era).
+pub const BACKOFF_SATURATION_COUNT: u32 = ERA_0.backoff_saturation_count;
+
 /// Group identifier (opaque string).
 pub type GroupId = String;
 

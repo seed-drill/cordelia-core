@@ -140,10 +140,10 @@ pub struct ReplicationSection {
 impl Default for ReplicationSection {
     fn default() -> Self {
         Self {
-            sync_interval_moderate_secs: 300,
-            sync_interval_taciturn_secs: 900,
-            tombstone_retention_days: 7,
-            max_batch_size: 100,
+            sync_interval_moderate_secs: cordelia_protocol::SYNC_INTERVAL_MODERATE_SECS,
+            sync_interval_taciturn_secs: cordelia_protocol::SYNC_INTERVAL_TACITURN_SECS,
+            tombstone_retention_days: cordelia_protocol::TOMBSTONE_RETENTION_DAYS,
+            max_batch_size: cordelia_protocol::MAX_BATCH_SIZE,
         }
     }
 }
@@ -186,16 +186,16 @@ fn default_churn_fraction() -> f64 {
     0.2
 }
 fn default_300() -> u64 {
-    300
+    cordelia_protocol::SYNC_INTERVAL_MODERATE_SECS
 }
 fn default_900() -> u64 {
-    900
+    cordelia_protocol::SYNC_INTERVAL_TACITURN_SECS
 }
 fn default_7() -> u32 {
-    7
+    cordelia_protocol::TOMBSTONE_RETENTION_DAYS
 }
 fn default_batch() -> u32 {
-    100
+    cordelia_protocol::MAX_BATCH_SIZE
 }
 fn default_role() -> String {
     "personal".into()
