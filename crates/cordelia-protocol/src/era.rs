@@ -53,8 +53,10 @@ pub struct ProtocolEra {
     // -- Transport --
     /// QUIC idle timeout in seconds (must be > keepalive interval).
     pub quic_idle_timeout_secs: u64,
-    /// Maximum message size in bytes.
+    /// Maximum message size in bytes (wire limit per QUIC stream message).
     pub max_message_bytes: usize,
+    /// Maximum encrypted blob size per individual memory item.
+    pub max_item_bytes: usize,
     /// Maximum batch size for memory fetch.
     pub max_batch_size: u32,
     /// Pong response timeout in seconds.
@@ -119,7 +121,8 @@ pub const ERA_0: ProtocolEra = ProtocolEra {
 
     // Transport
     quic_idle_timeout_secs: 300,
-    max_message_bytes: 16 * 1024 * 1024,
+    max_message_bytes: 512 * 1024,    // 512 KB -- backpressure on batch fetches
+    max_item_bytes: 16 * 1024,        // 16 KB -- force high-density memories
     max_batch_size: 100,
     pong_timeout_secs: 10,
 
@@ -166,5 +169,28 @@ mod tests {
     #[test]
     fn test_stale_timeout_is_6_hours() {
         assert_eq!(ERA_0.stale_timeout_secs, 21600);
+    }
+
+    #[test]
+    fn test_message_fits_multiple_items() {
+        // At least several max-size items must fit in one message.
+        // The batch size (100) is a soft cap; the message size is the hard cap.
+        // With large items, the fetch handler returns fewer per response.
+        let worst_case_wire = ERA_0.max_item_bytes * 4 / 3 + 200; // base64 + JSON envelope
+        let items_per_message = ERA_0.max_message_bytes / worst_case_wire;
+        assert!(
+            items_per_message >= 10,
+            "must fit at least 10 max-size items per message, got {items_per_message}"
+        );
+    }
+
+    #[test]
+    fn test_max_item_bytes_is_16kb() {
+        assert_eq!(ERA_0.max_item_bytes, 16 * 1024);
+    }
+
+    #[test]
+    fn test_max_message_bytes_is_512kb() {
+        assert_eq!(ERA_0.max_message_bytes, 512 * 1024);
     }
 }

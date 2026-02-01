@@ -47,6 +47,17 @@ impl ReplicationEngine {
         data: &[u8],
         key_version: u32,
     ) -> OutboundAction {
+        // Enforce item size limit before replication dispatch
+        if data.len() > cordelia_protocol::MAX_ITEM_BYTES {
+            tracing::warn!(
+                item_id,
+                size = data.len(),
+                max = cordelia_protocol::MAX_ITEM_BYTES,
+                "Conditions Not Met: item exceeds size limit, suppressing outbound replication"
+            );
+            return OutboundAction::None;
+        }
+
         let strategy = culture.strategy();
         let cs = checksum(data);
 
@@ -88,17 +99,31 @@ impl ReplicationEngine {
         item: &FetchedItem,
         our_groups: &[String],
     ) -> ReceiveOutcome {
-        // 1. Validate group membership
+        // 1. Validate item size (backpressure: reject oversized blobs at P2P boundary)
+        if item.encrypted_blob.len() > cordelia_protocol::MAX_ITEM_BYTES {
+            return ReceiveOutcome::Rejected(format!(
+                "Not My Problem, Entirely Yours: item {} bytes exceeds {} byte limit -- condense your thoughts",
+                item.encrypted_blob.len(),
+                cordelia_protocol::MAX_ITEM_BYTES
+            ));
+        }
+
+        // 2. Validate group membership
         if !our_groups.contains(&item.group_id) {
-            return ReceiveOutcome::Rejected(format!("not a member of group {}", item.group_id));
+            return ReceiveOutcome::Rejected(format!(
+                "Outside Context Problem: not a member of group '{}'",
+                item.group_id
+            ));
         }
 
-        // 2. Validate checksum
+        // 3. Validate checksum
         if !validate_checksum(item) {
-            return ReceiveOutcome::Rejected("checksum mismatch".into());
+            return ReceiveOutcome::Rejected(
+                "integrity violation: checksum mismatch -- item corrupted or tampered".into(),
+            );
         }
 
-        // 3. Dedup: check if we already have this exact item
+        // 4. Dedup: check if we already have this exact item
         if let Ok(Some(existing)) = storage.read_l2_item(&item.item_id) {
             if existing.checksum.as_deref() == Some(&item.checksum) {
                 return ReceiveOutcome::Duplicate;
@@ -110,7 +135,7 @@ impl ReplicationEngine {
             }
         }
 
-        // 4. Store the item (encrypted blob, no decryption)
+        // 5. Store the item (encrypted blob, no decryption)
         let write = L2ItemWrite {
             id: item.item_id.clone(),
             item_type: item.item_type.clone(),
@@ -128,7 +153,7 @@ impl ReplicationEngine {
             return ReceiveOutcome::Rejected(format!("storage error: {e}"));
         }
 
-        // 5. Log access
+        // 6. Log access
         let _ = storage.log_access(&cordelia_storage::AccessLogEntry {
             entity_id: item.author_id.clone(),
             action: "replicate_receive".into(),
@@ -208,6 +233,24 @@ mod tests {
     }
 
     #[test]
+    fn test_on_local_write_oversized_suppressed() {
+        let engine = default_engine();
+        let culture = GroupCulture {
+            broadcast_eagerness: "chatty".into(),
+            ..Default::default()
+        };
+
+        let oversized = vec![0u8; cordelia_protocol::MAX_ITEM_BYTES + 1];
+        let action =
+            engine.on_local_write("seed-drill", &culture, "big-item", "entity", &oversized, 1);
+
+        assert!(
+            matches!(action, OutboundAction::None),
+            "oversized item should suppress outbound replication"
+        );
+    }
+
+    #[test]
     fn test_on_local_write_passive() {
         let engine = default_engine();
         let culture = GroupCulture {
@@ -218,6 +261,64 @@ mod tests {
         let action = engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1);
 
         assert!(matches!(action, OutboundAction::None));
+    }
+
+    #[test]
+    fn test_on_receive_rejected_oversized() {
+        let engine = default_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let db = cordelia_storage::SqliteStorage::create_new(&dir.path().join("test.db")).unwrap();
+
+        // Create a blob larger than max_item_bytes (16 KB)
+        let oversized = vec![0u8; cordelia_protocol::MAX_ITEM_BYTES + 1];
+        let item = FetchedItem {
+            item_id: "big".into(),
+            item_type: "entity".into(),
+            encrypted_blob: oversized.clone(),
+            checksum: checksum(&oversized),
+            author_id: "attacker".into(),
+            group_id: "seed-drill".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-01T00:00:00Z".into(),
+        };
+
+        let result = engine.on_receive(&db, &item, &["seed-drill".into()]);
+        match result {
+            ReceiveOutcome::Rejected(reason) => {
+                assert!(
+                    reason.contains("Not My Problem"),
+                    "expected NMPEY rejection: {reason}"
+                );
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_on_receive_max_size_item_accepted() {
+        let engine = default_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let db = cordelia_storage::SqliteStorage::create_new(&dir.path().join("test.db")).unwrap();
+
+        // Exactly at limit should be accepted
+        let data = vec![0xABu8; cordelia_protocol::MAX_ITEM_BYTES];
+        let item = FetchedItem {
+            item_id: "just-right".into(),
+            item_type: "entity".into(),
+            encrypted_blob: data.clone(),
+            checksum: checksum(&data),
+            author_id: "russell".into(),
+            group_id: "seed-drill".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-01T00:00:00Z".into(),
+        };
+
+        let result = engine.on_receive(&db, &item, &["seed-drill".into()]);
+        assert_eq!(result, ReceiveOutcome::Stored);
     }
 
     #[test]

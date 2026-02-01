@@ -348,6 +348,20 @@ async fn l2_write(
     }
 
     let data = serde_json::to_vec(&req.data).unwrap_or_default();
+
+    // Enforce item size limit (backpressure: reject before storage/replication)
+    if data.len() > cordelia_protocol::MAX_ITEM_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "Conditions Not Met: item is {} bytes but era limit is {} bytes -- memories should be dense, not large",
+                data.len(),
+                cordelia_protocol::MAX_ITEM_BYTES
+            ),
+        )
+            .into_response();
+    }
+
     let meta = req.meta.unwrap_or_default();
 
     let write = L2ItemWrite {

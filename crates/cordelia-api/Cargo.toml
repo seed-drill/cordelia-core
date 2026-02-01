@@ -6,6 +6,7 @@ description = "Local node HTTP/Unix socket API for Cordelia"
 
 [dependencies]
 cordelia-storage = { workspace = true }
+cordelia-protocol = { workspace = true }
 cordelia-replication = { workspace = true }
 base64 = { workspace = true }
 axum = { workspace = true }

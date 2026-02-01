@@ -334,6 +334,7 @@ version = "0.1.1"
 dependencies = [
  "axum",
  "base64",
+ "cordelia-protocol",
  "cordelia-replication",
  "cordelia-storage",
  "hyper",

@@ -39,6 +39,9 @@ pub const MAX_BATCH_SIZE: u32 = ERA_0.max_batch_size;
 /// Maximum message size in bytes (sourced from current era).
 pub const MAX_MESSAGE_BYTES: usize = ERA_0.max_message_bytes;
 
+/// Maximum encrypted blob size per memory item (sourced from current era).
+pub const MAX_ITEM_BYTES: usize = ERA_0.max_item_bytes;
+
 /// Pong response timeout in seconds (sourced from current era).
 pub const PONG_TIMEOUT_SECS: u64 = ERA_0.pong_timeout_secs;
 
