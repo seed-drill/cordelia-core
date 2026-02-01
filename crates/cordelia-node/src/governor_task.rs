@@ -293,11 +293,7 @@ pub async fn run_governor_loop(
 
 /// Ask a random connected relay peer for its known peers, then register
 /// any new ones in the governor. Fire-and-forget; errors are debug-logged.
-async fn discover_peers(
-    pool: &PeerPool,
-    governor: &Arc<Mutex<Governor>>,
-    our_node_id: [u8; 32],
-) {
+async fn discover_peers(pool: &PeerPool, governor: &Arc<Mutex<Governor>>, our_node_id: [u8; 32]) {
     let relays = pool.relay_peers().await;
     if relays.is_empty() {
         return;
