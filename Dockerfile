@@ -22,7 +22,7 @@ COPY boot3-config.toml /home/cordelia/default-config.toml
 RUN mkdir -p /home/cordelia/.cordelia && chown -R cordelia:cordelia /home/cordelia
 USER cordelia
 
-EXPOSE 9474/udp
+EXPOSE 9474/tcp
 EXPOSE 9473/tcp
 
 # Copy default config to volume mount if not already present, then start

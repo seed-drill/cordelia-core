@@ -9,7 +9,7 @@ primary_region = "lhr"
 
 [[services]]
   internal_port = 9474
-  protocol = "udp"
+  protocol = "tcp"
 
   [[services.ports]]
     port = 9474
