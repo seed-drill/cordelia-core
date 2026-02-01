@@ -203,14 +203,12 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let our_groups = initial_groups;
 
     // External address tracker (NAT hairpin avoidance)
-    let external_addr = Arc::new(tokio::sync::RwLock::new(
-        external_addr::ExternalAddr::new(
-            cfg.network
-                .external_addr
-                .as_deref()
-                .and_then(|s| s.parse::<std::net::SocketAddr>().ok()),
-        ),
-    ));
+    let external_addr = Arc::new(tokio::sync::RwLock::new(external_addr::ExternalAddr::new(
+        cfg.network
+            .external_addr
+            .as_deref()
+            .and_then(|s| s.parse::<std::net::SocketAddr>().ok()),
+    )));
 
     // Shutdown broadcast channel
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
@@ -632,9 +630,9 @@ mod tests {
     use std::net::SocketAddr;
 
     fn test_external_addr() -> Arc<tokio::sync::RwLock<external_addr::ExternalAddr>> {
-        Arc::new(tokio::sync::RwLock::new(
-            external_addr::ExternalAddr::new(None),
-        ))
+        Arc::new(tokio::sync::RwLock::new(external_addr::ExternalAddr::new(
+            None,
+        )))
     }
 
     /// Two-node integration test: spawn two in-process QUIC endpoints, handshake,

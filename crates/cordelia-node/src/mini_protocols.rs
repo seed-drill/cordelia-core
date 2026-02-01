@@ -330,8 +330,11 @@ pub async fn run_keepalive_loop(
         }
 
         // Wait for pong with timeout
-        let pong_result =
-            tokio::time::timeout(std::time::Duration::from_secs(cordelia_protocol::PONG_TIMEOUT_SECS), read_message(&mut recv)).await;
+        let pong_result = tokio::time::timeout(
+            std::time::Duration::from_secs(cordelia_protocol::PONG_TIMEOUT_SECS),
+            read_message(&mut recv),
+        )
+        .await;
 
         match pong_result {
             Ok(Ok(Message::Pong(pong))) => {

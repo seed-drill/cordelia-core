@@ -121,8 +121,8 @@ pub const ERA_0: ProtocolEra = ProtocolEra {
 
     // Transport
     quic_idle_timeout_secs: 300,
-    max_message_bytes: 512 * 1024,    // 512 KB -- backpressure on batch fetches
-    max_item_bytes: 16 * 1024,        // 16 KB -- force high-density memories
+    max_message_bytes: 512 * 1024, // 512 KB -- backpressure on batch fetches
+    max_item_bytes: 16 * 1024,     // 16 KB -- force high-density memories
     max_batch_size: 100,
     pong_timeout_secs: 10,
 
@@ -133,9 +133,9 @@ pub const ERA_0: ProtocolEra = ProtocolEra {
     tombstone_retention_days: 7,
 
     // Governor scheduling
-    group_exchange_ticks: 6,   // 60s at 10s tick
-    peer_discovery_ticks: 3,   // 30s at 10s tick
-    bootnode_retry_ticks: 30,  // 5min at 10s tick
+    group_exchange_ticks: 6,  // 60s at 10s tick
+    peer_discovery_ticks: 3,  // 30s at 10s tick
+    bootnode_retry_ticks: 30, // 5min at 10s tick
     backoff_saturation_count: 5,
 };
 
