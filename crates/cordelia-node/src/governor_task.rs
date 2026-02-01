@@ -244,10 +244,18 @@ pub async fn run_governor_loop(
                         let mut gov = governor.lock().await;
 
                         // Check if this peer's listen addrs match a seeded
-                        // bootnode placeholder (different PeerId, same addr)
+                        // bootnode placeholder. Only match Cold peers (placeholders
+                        // are never marked connected) to avoid clobbering real peers
+                        // behind the same NAT.
                         let placeholder = gov
                             .all_peers()
-                            .filter(|p| p.node_id != peer_id)
+                            .filter(|p| {
+                                p.node_id != peer_id
+                                    && matches!(
+                                        p.state,
+                                        cordelia_governor::PeerState::Cold
+                                    )
+                            })
                             .find(|p| {
                                 p.addrs.iter().any(|a| listen_addrs.contains(a))
                             })

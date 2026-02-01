@@ -234,15 +234,31 @@ pub async fn run_swarm_loop(
                     SwarmEvent::NewListenAddr { address, .. } => {
                         tracing::info!(%address, "listening");
                     }
-                    SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
-                        let addr = endpoint.get_remote_address().clone();
-                        let _ = event_tx.send(SwarmEvent2::PeerConnected {
-                            peer_id,
-                            addrs: vec![addr],
-                        });
+                    SwarmEvent::ConnectionEstablished {
+                        peer_id,
+                        endpoint,
+                        num_established,
+                        ..
+                    } => {
+                        // Only emit connect for the first connection to this peer
+                        if num_established.get() == 1 {
+                            let addr = endpoint.get_remote_address().clone();
+                            let _ = event_tx.send(SwarmEvent2::PeerConnected {
+                                peer_id,
+                                addrs: vec![addr],
+                            });
+                        }
                     }
-                    SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                        let _ = event_tx.send(SwarmEvent2::PeerDisconnected { peer_id });
+                    SwarmEvent::ConnectionClosed {
+                        peer_id,
+                        num_established,
+                        ..
+                    } => {
+                        // Only emit disconnect when last connection closes
+                        if num_established == 0 {
+                            let _ =
+                                event_tx.send(SwarmEvent2::PeerDisconnected { peer_id });
+                        }
                     }
                     SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
                         let _ = event_tx.send(SwarmEvent2::DialFailure { peer_id });
