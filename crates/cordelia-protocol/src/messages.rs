@@ -54,6 +54,9 @@ pub struct HandshakePropose {
     pub node_id: [u8; 32],
     pub timestamp: u64,
     pub groups: Vec<GroupId>,
+    /// Protocol era this node is operating under. Old nodes omit this (defaults to 0).
+    #[serde(default)]
+    pub era: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +70,9 @@ pub struct HandshakeAccept {
     /// The remote address we observe for the proposing peer (NAT hairpin avoidance).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_addr: Option<SocketAddr>,
+    /// Protocol era this node is operating under. Old nodes omit this (defaults to 0).
+    #[serde(default)]
+    pub era: u16,
 }
 
 // ============================================================================
@@ -263,6 +269,7 @@ mod tests {
             node_id: [0xAA; 32],
             timestamp: 1234567890,
             groups: vec!["seed-drill".into()],
+            era: crate::ERA_0.id,
         });
 
         let json = serde_json::to_string(&msg).unwrap();

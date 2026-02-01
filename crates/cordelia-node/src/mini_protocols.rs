@@ -114,6 +114,7 @@ pub async fn handle_inbound_handshake(
                 PROTOCOL_MAGIC, propose.magic
             )),
             observed_addr: None,
+            era: cordelia_protocol::ERA_0.id,
         });
         write_message(&mut send, &reject).await?;
         return Err("invalid magic".into());
@@ -129,6 +130,7 @@ pub async fn handle_inbound_handshake(
             groups: vec![],
             reject_reason: Some("no compatible version".into()),
             observed_addr: None,
+            era: cordelia_protocol::ERA_0.id,
         });
         write_message(&mut send, &reject).await?;
         return Err("version mismatch".into());
@@ -142,6 +144,7 @@ pub async fn handle_inbound_handshake(
         groups: our_groups.to_vec(),
         reject_reason: None,
         observed_addr: Some(conn.remote_address()),
+        era: cordelia_protocol::ERA_0.id,
     });
     write_message(&mut send, &accept).await?;
 
@@ -188,6 +191,7 @@ pub async fn handle_outbound_handshake(
         node_id: our_node_id,
         timestamp: now_ts(),
         groups: our_groups.to_vec(),
+        era: cordelia_protocol::ERA_0.id,
     });
     write_message(&mut send, &propose).await?;
 

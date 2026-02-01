@@ -4,10 +4,12 @@
 //! 4-byte big-endian length prefix + serde JSON.
 
 pub mod codec;
+pub mod era;
 pub mod messages;
 pub mod tls;
 
 pub use codec::MessageCodec;
+pub use era::{ProtocolEra, CURRENT_ERA, ERA_0};
 pub use messages::*;
 
 /// Protocol magic number: 0xC0DE11A1
@@ -19,20 +21,20 @@ pub const VERSION_MIN: u16 = 1;
 /// Maximum supported protocol version.
 pub const VERSION_MAX: u16 = 1;
 
-/// Keep-alive interval in seconds.
-pub const KEEPALIVE_INTERVAL_SECS: u64 = 15;
+/// Keep-alive interval in seconds (sourced from current era).
+pub const KEEPALIVE_INTERVAL_SECS: u64 = ERA_0.keepalive_interval_secs;
 
-/// QUIC idle timeout in seconds (must be > keepalive interval).
-pub const QUIC_IDLE_TIMEOUT_SECS: u64 = 300;
+/// QUIC idle timeout in seconds (sourced from current era).
+pub const QUIC_IDLE_TIMEOUT_SECS: u64 = ERA_0.quic_idle_timeout_secs;
 
-/// Missed pings before declaring peer dead.
-pub const KEEPALIVE_MISS_LIMIT: u32 = 3;
+/// Missed pings before declaring peer dead (sourced from current era).
+pub const KEEPALIVE_MISS_LIMIT: u32 = ERA_0.keepalive_miss_limit;
 
-/// Peer sharing interval in seconds.
-pub const PEER_SHARE_INTERVAL_SECS: u64 = 300;
+/// Peer sharing interval in seconds (sourced from current era).
+pub const PEER_SHARE_INTERVAL_SECS: u64 = ERA_0.peer_share_interval_secs;
 
-/// Maximum batch size for memory fetch.
-pub const MAX_BATCH_SIZE: u32 = 100;
+/// Maximum batch size for memory fetch (sourced from current era).
+pub const MAX_BATCH_SIZE: u32 = ERA_0.max_batch_size;
 
 /// Group identifier (opaque string).
 pub type GroupId = String;

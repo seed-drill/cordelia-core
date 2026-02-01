@@ -3,23 +3,23 @@
 //! Background tokio task, ticks every 10s.
 //! Manages Cold → Warm → Hot peer lifecycle with adversarial demotion.
 
-use cordelia_protocol::{GroupId, NodeId};
+use cordelia_protocol::{GroupId, NodeId, ERA_0};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-/// Governor tick interval.
-pub const TICK_INTERVAL: Duration = Duration::from_secs(10);
+/// Governor tick interval (sourced from current era).
+pub const TICK_INTERVAL: Duration = Duration::from_secs(ERA_0.tick_interval_secs);
 
-/// Time before demoting inactive peers.
-const DEAD_TIMEOUT: Duration = Duration::from_secs(90);
+/// Time before demoting inactive peers (sourced from current era).
+const DEAD_TIMEOUT: Duration = Duration::from_secs(ERA_0.dead_timeout_secs);
 
-/// Time before demoting stale hot peers (no items delivered).
-const STALE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Time before demoting stale hot peers with no items delivered (sourced from current era).
+const STALE_TIMEOUT: Duration = Duration::from_secs(ERA_0.stale_timeout_secs);
 
-/// Default ban duration.
-const DEFAULT_BAN_DURATION: Duration = Duration::from_secs(3600);
+/// Default ban duration (sourced from current era).
+const DEFAULT_BAN_DURATION: Duration = Duration::from_secs(ERA_0.ban_base_duration_secs);
 
 /// Dial policy controls which peers the governor will attempt to connect to.
 #[derive(Debug, Clone)]
@@ -51,8 +51,8 @@ impl Default for GovernorTargets {
             warm_min: 10,
             warm_max: 50,
             cold_max: 100,
-            churn_interval_secs: 3600,
-            churn_fraction: 0.2,
+            churn_interval_secs: ERA_0.churn_interval_secs,
+            churn_fraction: ERA_0.churn_fraction(),
         }
     }
 }
@@ -246,13 +246,16 @@ impl Governor {
     }
 
     /// Backoff duration for a peer based on disconnect count.
-    /// Exponential: min(2^count * 30s, 15min). Zero if never disconnected.
+    /// Exponential: min(2^count * base, max). Zero if never disconnected.
+    /// Base and max sourced from current era.
     fn reconnect_backoff(disconnect_count: u32) -> Duration {
         if disconnect_count == 0 {
             return Duration::ZERO;
         }
-        let secs = 30u64.saturating_mul(1u64 << disconnect_count.min(5));
-        Duration::from_secs(secs.min(15 * 60))
+        let base = ERA_0.reconnect_backoff_base_secs;
+        let max = ERA_0.reconnect_backoff_max_secs;
+        let secs = base.saturating_mul(1u64 << disconnect_count.min(5));
+        Duration::from_secs(secs.min(max))
     }
 
     /// Replace a peer's node ID (e.g. after handshake reveals real identity).
@@ -534,7 +537,7 @@ impl Governor {
 
         let excess = hot - self.targets.hot_max;
 
-        // Demote stale (no items for 30 min) first, then worst performers
+        // Demote stale (no items for STALE_TIMEOUT) first, then worst performers
         let mut hot_peers: Vec<(NodeId, f64, bool)> = self
             .peers
             .values()

@@ -1,0 +1,135 @@
+//! Protocol eras -- versioned parameter sets for the Cordelia network.
+//!
+//! An era defines all protocol-level timing and security parameters that peers
+//! must agree on. Pool sizes (hot/warm/cold targets) are node-local decisions
+//! and NOT part of the era.
+//!
+//! Currently hardcoded as ERA_0. When the Hard Fork Combinator (HFC) is
+//! implemented, era transitions will be signaled via supermajority and
+//! negotiated during handshake.
+
+/// A protocol era: a named, versioned set of timing and security parameters.
+///
+/// All peers on the network must operate under the same era. Era transitions
+/// are coordinated via the (future) HFC mechanism.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtocolEra {
+    /// Era identifier. Monotonically increasing.
+    pub id: u16,
+
+    // -- Keepalive --
+    /// Seconds between keepalive pings.
+    pub keepalive_interval_secs: u64,
+    /// Missed pings before declaring a peer dead.
+    pub keepalive_miss_limit: u32,
+
+    // -- Governor timing --
+    /// Governor tick interval in seconds.
+    pub tick_interval_secs: u64,
+    /// Seconds of inactivity before demoting an active peer.
+    pub dead_timeout_secs: u64,
+    /// Seconds before demoting a hot peer with no items delivered.
+    pub stale_timeout_secs: u64,
+    /// Base ban duration in seconds (escalated on repeat offences).
+    pub ban_base_duration_secs: u64,
+
+    // -- Reconnect backoff --
+    /// Base backoff in seconds: min(2^count * base, max).
+    pub reconnect_backoff_base_secs: u64,
+    /// Maximum backoff in seconds.
+    pub reconnect_backoff_max_secs: u64,
+
+    // -- Churn --
+    /// Seconds between churn cycles (warm peer rotation).
+    pub churn_interval_secs: u64,
+    /// Fraction of warm peers to rotate per churn cycle (0.0 - 1.0).
+    /// Stored as per-mille (parts per thousand) to avoid f64 in const.
+    pub churn_per_mille: u32,
+
+    // -- Peer sharing --
+    /// Seconds between peer sharing rounds.
+    pub peer_share_interval_secs: u64,
+
+    // -- Transport --
+    /// QUIC idle timeout in seconds (must be > keepalive interval).
+    pub quic_idle_timeout_secs: u64,
+    /// Maximum message size in bytes.
+    pub max_message_bytes: usize,
+    /// Maximum batch size for memory fetch.
+    pub max_batch_size: u32,
+}
+
+impl ProtocolEra {
+    /// Churn fraction as f64 (convenience for governor).
+    pub const fn churn_fraction(&self) -> f64 {
+        self.churn_per_mille as f64 / 1000.0
+    }
+}
+
+/// Era 0: Genesis parameters.
+///
+/// Conservative timing suitable for a small initial network (3-20 nodes).
+/// Stale timeout is generous (6 hours) because low-activity groups may have
+/// long quiet periods where healthy peers deliver nothing.
+pub const ERA_0: ProtocolEra = ProtocolEra {
+    id: 0,
+
+    // Keepalive
+    keepalive_interval_secs: 15,
+    keepalive_miss_limit: 3,
+
+    // Governor timing
+    tick_interval_secs: 10,
+    dead_timeout_secs: 90,
+    stale_timeout_secs: 6 * 3600, // 6 hours (was 30 min pre-era)
+    ban_base_duration_secs: 3600,
+
+    // Reconnect backoff: min(2^count * 30s, 15min)
+    reconnect_backoff_base_secs: 30,
+    reconnect_backoff_max_secs: 15 * 60,
+
+    // Churn: rotate 20% of warm peers every hour
+    churn_interval_secs: 3600,
+    churn_per_mille: 200, // 0.2
+
+    // Peer sharing
+    peer_share_interval_secs: 300,
+
+    // Transport
+    quic_idle_timeout_secs: 300,
+    max_message_bytes: 16 * 1024 * 1024,
+    max_batch_size: 100,
+};
+
+/// The current active era. When HFC is implemented, this will be determined
+/// by network consensus rather than hardcoded.
+pub const CURRENT_ERA: &ProtocolEra = &ERA_0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_era_0_invariants() {
+        let era = &ERA_0;
+        assert_eq!(era.id, 0);
+        // Keepalive interval must be less than idle timeout
+        assert!(era.keepalive_interval_secs < era.quic_idle_timeout_secs);
+        // Dead timeout should be a few keepalive intervals
+        assert!(era.dead_timeout_secs > era.keepalive_interval_secs);
+        // Stale timeout must be greater than dead timeout
+        assert!(era.stale_timeout_secs > era.dead_timeout_secs);
+        // Churn fraction must be in (0, 1)
+        assert!(era.churn_per_mille > 0 && era.churn_per_mille < 1000);
+    }
+
+    #[test]
+    fn test_churn_fraction() {
+        assert!((ERA_0.churn_fraction() - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_stale_timeout_is_6_hours() {
+        assert_eq!(ERA_0.stale_timeout_secs, 21600);
+    }
+}
