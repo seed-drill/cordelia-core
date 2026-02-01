@@ -148,6 +148,18 @@ pub async fn run_connection(
                 {
                     Ok(peer_id) => {
                         resolved_peer_id = peer_id;
+
+                        // Register inbound peer with governor for promotion tracking
+                        if let Some(ref gov) = governor {
+                            let peer_groups = pool
+                                .get(&peer_id)
+                                .await
+                                .map(|h| h.groups.clone())
+                                .unwrap_or_default();
+                            let mut gov = gov.lock().await;
+                            gov.add_peer(peer_id, vec![remote], peer_groups);
+                            gov.mark_connected(&peer_id);
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(%remote, "handshake failed: {e}");
