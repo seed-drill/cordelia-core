@@ -578,7 +578,9 @@ W = 100 writes/min per group
 Exceeding: drop writes, warn group admin
 ```
 
-3. **Item size limit**: Max 64KB per item (already in protocol spec).
+3. **Item size limit**: Max 16KB per item (ERA_0 `max_item_bytes`). **IMPLEMENTED.** Enforced at three boundaries: API write (413 before storage), P2P receive (reject before store), outbound replication (suppress before dispatch).
+
+4. **Message size limit**: Max 512KB per wire message (ERA_0 `max_message_bytes`). **IMPLEMENTED.** Enforced by codec and `read_message`. Creates batch-level backpressure -- large items reduce items-per-fetch naturally.
 
 With rate limits:
 ```
@@ -588,25 +590,67 @@ Max bandwidth per attacker peer = 8.3 * 4KB = 33 KB/s
 
 To generate 80 MB/s, attacker needs 80,000/33 = 2,424 compromised peers all writing simultaneously. At which point you've spent enough resources to eclipse most of the network anyway.
 
-**Result: Rate limiting reduces amplification to a non-issue.** The attacker's cost scales linearly with desired damage.
+With item size limits, worst case per attacker peer is further constrained:
+```
+Max bandwidth per attacker peer = 8.3 * 16KB = 133 KB/s  (at max item size)
+```
+
+**Result: Rate limiting + size caps reduce amplification to a non-issue.** The attacker's cost scales linearly with desired damage.
 
 ### 4.6 Backpressure -- Congestion Is The Client's Problem
 
 **Principle**: The network is a shared resource with finite capacity. If it's busy, you wait. Cardano's mempool does exactly this -- FIFO queue, bounded capacity, if there's no room your transaction waits. No apologies, no priority lanes, no special treatment.
 
-#### 4.6.1 Current Gap
+#### 4.6.1 Implementation Status
 
-The current implementation has **zero backpressure**:
+**Implemented (ERA_0):**
+- `max_item_bytes = 16KB` -- hard cap on individual memory item size, enforced at API write, P2P receive, and outbound replication boundaries
+- `max_message_bytes = 512KB` -- hard cap on wire message size, enforced by codec and `read_message`
+- `max_batch_size = 100` -- soft cap on items per fetch (message size is the hard cap; large items reduce batch naturally)
+- NAT hairpin avoidance -- external address quorum + gossip filtering prevents hairpin connections
+
+**Remaining gaps:**
 - `run_connection` spawns a new tokio task per inbound QUIC stream (unbounded)
 - No limit on concurrent connections per node
 - No limit on concurrent streams per connection
 - No per-peer rate tracking for protocol messages
-- `read_message` allocates up to 16MB per message
 - Storage queries have no cost accounting
 
-An attacker (or just a busy network) can exhaust a node's memory and CPU by opening streams faster than they're processed.
+An attacker (or just a busy network) can still exhaust a node's memory and CPU by opening streams faster than they're processed. The size caps prevent individual oversized payloads but don't prevent volume-based exhaustion.
 
-#### 4.6.2 Design: Bounded Inbound Queue
+#### 4.6.2 Size-Based Backpressure (Implemented)
+
+Hard size caps at every layer, inspired by Cardano's `maxTxSize` / `maxBlockBodySize` model. No fee mechanism -- the caps alone create sufficient backpressure.
+
+**ERA_0 parameters:**
+
+| Parameter | Value | Cardano analogue |
+|-----------|-------|-----------------|
+| `max_item_bytes` | 16 KB | `maxTxSize` (16 KB) |
+| `max_message_bytes` | 512 KB | `maxBlockBodySize` (90 KB) |
+| `max_batch_size` | 100 | Transactions per block |
+
+**Three enforcement boundaries:**
+
+| Boundary | Layer | Enforcement | Response |
+|----------|-------|-------------|----------|
+| **API write** | `cordelia-api` `l2_write` handler | Reject before storage | HTTP 413: "Conditions Not Met: memories should be dense, not large" |
+| **P2P receive** | `cordelia-replication` `on_receive` | Reject before store | "Not My Problem, Entirely Yours: condense your thoughts" |
+| **Outbound replication** | `cordelia-replication` `on_local_write` | Suppress before dispatch | "Conditions Not Met: item exceeds size limit" (logged, not sent) |
+
+**Derived throughput ceilings** (max sustained rate per peer per sync cycle):
+
+| Culture | Interval | Max throughput | Typical throughput |
+|---------|----------|---------------|-------------------|
+| Chatty (eager push) | 60s | 512 KB / 60s = **8.5 KB/s** | ~100 KB / 60s = 1.7 KB/s |
+| Moderate | 300s | 512 KB / 300s = **1.7 KB/s** | ~100 KB / 300s = 0.3 KB/s |
+| Taciturn | 900s | 512 KB / 900s = **0.6 KB/s** | ~50 KB / 900s = 0.06 KB/s |
+
+**Design rationale**: 16 KB per item is conservative. A rich entity with embedding (384-dim f32 = 1.5 KB) plus detailed JSON is typically 3-8 KB. Session summaries are 2-15 KB. Nothing legitimate approaches 16 KB. The constraint forces entities to create high-density, well-structured memories rather than dumping raw content. Andrew Braybrook fit Uridium into 64K of C64 RAM -- all ROM banks paged out, every byte of the 6510's address space used -- we can fit a memory into 16K.
+
+The 512 KB message limit means ~30 max-size items per fetch response, or ~125 typical items. A full `max_batch_size` of 100 typical items (~400 KB) fits comfortably. The message limit only bites when items are unusually large, which is the backpressure working as intended.
+
+#### 4.6.3 Design: Bounded Inbound Queue
 
 Each node maintains a bounded message queue per protocol type:
 
@@ -630,7 +674,7 @@ Response: "Not My Problem, Entirely Yours. Queue full."
 Action: Peer demoted. Repeated: banned with escalation.
 ```
 
-#### 4.6.3 Per-Peer Fairness
+#### 4.6.4 Per-Peer Fairness
 
 Each peer gets a fair share of queue capacity:
 ```
@@ -639,7 +683,7 @@ per_peer_budget = queue_capacity / active_peers
 
 No single peer can consume more than their share. If one peer floods, only their messages queue up -- other peers are unaffected.
 
-#### 4.6.4 Connection Limits (R3)
+#### 4.6.5 Connection Limits (R3)
 
 ```
 max_connections_total:     500   (GCU) / 2000 (GSV)
@@ -650,7 +694,7 @@ max_streams_per_connection: 64   (quinn default is 256, we tighten)
 
 Beyond limits: new connections get a clean QUIC close with application error code. The connecting node backs off and retries.
 
-#### 4.6.5 Why This Works
+#### 4.6.6 Why This Works
 
 The Cardano insight applies perfectly: **the protocol doesn't owe anyone immediate service.** The network's job is to process messages fairly and in order, not to process them instantly. If you want faster service, the answer is the same as for chatty convergence: make better peers, not more demands.
 
