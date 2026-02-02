@@ -360,6 +360,29 @@ for o in $(seq 0 $((ORG_COUNT - 1))); do
     done
 done
 
+# Orchestrator container: connected to ALL networks for monitoring and testing
+{
+    cat >> "$COMPOSE_FILE" <<EOF
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    hostname: orchestrator
+    container_name: cordelia-e2e-orchestrator
+    environment:
+      - BEARER_TOKEN=${BEARER_TOKEN}
+      - BACKBONE_COUNT=${BACKBONE_COUNT}
+      - ORG_SPEC=${ORG_SPEC}
+    networks:
+      - backbone
+EOF
+    for o in $(seq 0 $((ORG_COUNT - 1))); do
+        org="${ORG_NAMES[$o]}"
+        echo "      - org-${org}" >> "$COMPOSE_FILE"
+    done
+}
+
 # Networks
 cat >> "$COMPOSE_FILE" <<EOF
 networks:

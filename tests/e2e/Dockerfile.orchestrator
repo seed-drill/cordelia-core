@@ -1,0 +1,34 @@
+# Test orchestrator container for cordelia zoned topology.
+# Sits inside the Docker network, can reach all nodes by hostname.
+# Runs monitor, regression tests, and provides a shell for ad-hoc testing.
+#
+# Build:  docker build -t cordelia-orchestrator -f tests/e2e/Dockerfile.orchestrator tests/e2e/
+# Run:    docker compose -f docker-compose.generated.yml up -d orchestrator
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash curl jq dnsutils iputils-ping net-tools procps \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tests
+
+# Copy test scripts and helpers
+COPY monitor.sh test-zoned-replication.sh smoke-test.sh topology.env runner.sh ./
+COPY lib/ ./lib/
+RUN chmod +x *.sh
+
+# Default bearer token matches Dockerfile.test
+ENV BEARER_TOKEN=test-token-fixed
+ENV TERM=xterm-256color
+
+# Health endpoint: curl boot1 to verify network connectivity
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -sf -X POST \
+        -H "Authorization: Bearer ${BEARER_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{}' \
+        http://boot1:9473/api/v1/status || exit 1
+
+# Keep running for interactive use and scheduled tests
+CMD ["bash", "-c", "echo 'Cordelia test orchestrator ready.'; echo 'Commands:'; echo '  ./smoke-test.sh          - run regression suite'; echo '  ./monitor.sh --watch     - live network monitor (from host)'; echo '  bash                     - interactive shell'; exec sleep infinity"]
