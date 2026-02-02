@@ -287,7 +287,31 @@ impl Governor {
 
     /// Replace a peer's node ID (e.g. after identify reveals real identity).
     /// Moves all peer state from `old` to `new`, preserving relay flag. Returns true if replaced.
+    ///
+    /// If the `new` PeerId already exists and is in a connected state (Warm/Hot),
+    /// we just remove the old placeholder rather than overwriting the live entry.
     pub fn replace_node_id(&mut self, old: &NodeId, new: NodeId, groups: Vec<GroupId>) -> bool {
+        // Check if the target already exists in a connected state
+        if let Some(existing) = self.peers.get(&new) {
+            if existing.state.is_active() {
+                // Target is already Warm/Hot -- don't overwrite with the Cold placeholder.
+                // Just remove the stale placeholder and carry over relay flag.
+                if let Some(old_peer) = self.peers.remove(old) {
+                    if old_peer.is_relay {
+                        if let Some(target) = self.peers.get_mut(&new) {
+                            target.is_relay = true;
+                        }
+                    }
+                    tracing::debug!(
+                        peer = %new,
+                        old = %old,
+                        "gov: placeholder removed (target already active)"
+                    );
+                }
+                return true;
+            }
+        }
+
         if let Some(mut peer) = self.peers.remove(old) {
             peer.node_id = new;
             peer.groups = groups;
@@ -1125,6 +1149,42 @@ mod tests {
             !actions.connect.contains(&untrusted_id),
             "untrusted relay should NOT be in connect with TrustedOnly"
         );
+    }
+
+    #[test]
+    fn test_replace_does_not_overwrite_active_peer() {
+        let mut gov = Governor::new(GovernorTargets::default(), vec!["g1".into()]);
+        let placeholder_id = make_peer_id(99);
+        let real_id = make_peer_id(1);
+
+        // Seed placeholder as cold relay
+        gov.add_peer(placeholder_id, make_addr(), vec![]);
+        gov.set_peer_relay(&placeholder_id, true);
+
+        // Real peer connects inbound and is already warm
+        gov.add_peer(real_id, make_addr(), vec!["g1".into()]);
+        gov.mark_connected(&real_id);
+        assert_eq!(*gov.peer_state(&real_id).unwrap(), PeerState::Warm);
+
+        // Identify reveals placeholder == real_id. replace_node_id must NOT
+        // overwrite the Warm entry with the Cold placeholder.
+        let replaced = gov.replace_node_id(&placeholder_id, real_id, vec!["g1".into()]);
+        assert!(replaced);
+
+        // Real peer should still be Warm (not Cold)
+        let peer = gov.peer_info(&real_id).unwrap();
+        assert_eq!(
+            peer.state,
+            PeerState::Warm,
+            "active peer must not be overwritten"
+        );
+        assert!(
+            peer.is_relay,
+            "relay flag from placeholder should be carried over"
+        );
+
+        // Placeholder should be gone
+        assert!(gov.peer_info(&placeholder_id).is_none());
     }
 
     #[test]

@@ -352,6 +352,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 event_rx,
                 bootnodes,
                 shared_groups,
+                our_peer_id,
                 shutdown,
             )
             .await;

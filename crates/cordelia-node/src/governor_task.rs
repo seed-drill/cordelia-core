@@ -29,6 +29,7 @@ pub async fn run_governor_loop(
     mut event_rx: broadcast::Receiver<SwarmEvent2>,
     bootnodes: Vec<BootnodeEntry>,
     shared_groups: Arc<RwLock<Vec<String>>>,
+    our_peer_id: PeerId,
     mut shutdown: broadcast::Receiver<()>,
 ) {
     if bootnodes.is_empty() {
@@ -191,8 +192,9 @@ pub async fn run_governor_loop(
                     let pool2 = pool.clone();
                     let gov2 = governor.clone();
                     let cmd_tx2 = cmd_tx.clone();
+                    let local_id = our_peer_id;
                     tokio::spawn(async move {
-                        discover_peers(&pool2, &gov2, &cmd_tx2).await;
+                        discover_peers(&pool2, &gov2, &cmd_tx2, local_id).await;
                     });
                 }
             }
@@ -386,11 +388,13 @@ pub async fn run_governor_loop(
 }
 
 /// Ask a random connected relay peer for its known peers, then register
-/// any new ones in the governor.
+/// any genuinely new ones in the governor. Skips our own PeerId and
+/// peers already in a connected state (Warm/Hot).
 async fn discover_peers(
     pool: &PeerPool,
     governor: &Arc<Mutex<Governor>>,
     cmd_tx: &mpsc::Sender<SwarmCommand>,
+    our_peer_id: PeerId,
 ) {
     let relays = pool.relay_peers().await;
     if relays.is_empty() {
@@ -440,6 +444,21 @@ async fn discover_peers(
             Ok(id) => id,
             Err(_) => continue,
         };
+
+        // Never add ourselves
+        if peer_id == our_peer_id {
+            continue;
+        }
+
+        // Skip peers already in a connected state (Warm/Hot) -- only add
+        // genuinely new or Cold peers to avoid re-creating cold entries
+        // for peers we're already talking to.
+        if let Some(existing) = gov.peer_info(&peer_id) {
+            if existing.state.is_active() {
+                continue;
+            }
+        }
+
         let addrs: Vec<Multiaddr> = pa.addrs.iter().filter_map(|a| a.parse().ok()).collect();
         if addrs.is_empty() {
             continue;
