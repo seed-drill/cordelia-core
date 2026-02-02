@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use cordelia_governor::Governor;
 use libp2p::{Multiaddr, PeerId};
-use rand::Rng;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
 use crate::config::BootnodeEntry;
@@ -390,56 +389,65 @@ pub async fn run_governor_loop(
 /// Ask a random connected relay peer for its known peers, then register
 /// any genuinely new ones in the governor. Skips our own PeerId and
 /// peers already in a connected state (Warm/Hot).
+/// Maximum number of relays to query per discovery round.
+const GOSSIP_FAN_OUT: usize = 3;
+
 async fn discover_peers(
     pool: &PeerPool,
     governor: &Arc<Mutex<Governor>>,
     cmd_tx: &mpsc::Sender<SwarmCommand>,
     our_peer_id: PeerId,
 ) {
-    let relays = pool.relay_peers().await;
+    let mut relays = pool.relay_peers().await;
     if relays.is_empty() {
         return;
     }
 
-    let idx = rand::thread_rng().gen_range(0..relays.len());
-    let relay = &relays[idx];
+    // Shuffle and pick up to GOSSIP_FAN_OUT relays for broader discovery
+    use rand::seq::SliceRandom;
+    relays.shuffle(&mut rand::thread_rng());
+    let targets: Vec<_> = relays.into_iter().take(GOSSIP_FAN_OUT).collect();
 
-    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-    tracing::debug!(relay = %relay.node_id, "gov: requesting peer share");
-    if let Err(e) = cmd_tx
-        .send(SwarmCommand::SendPeerShareRequest {
-            peer: relay.node_id,
-            request: cordelia_protocol::messages::PeerShareRequest { max_peers: 20 },
-            response_tx: resp_tx,
-        })
-        .await
-    {
-        tracing::warn!(relay = %relay.node_id, "gov: peer discovery send failed: {e}");
-        return;
+    // Query all target relays concurrently
+    let mut futs = Vec::with_capacity(targets.len());
+    for relay in &targets {
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+        tracing::debug!(relay = %relay.node_id, "gov: requesting peer share");
+        if let Err(e) = cmd_tx
+            .send(SwarmCommand::SendPeerShareRequest {
+                peer: relay.node_id,
+                request: cordelia_protocol::messages::PeerShareRequest { max_peers: 20 },
+                response_tx: resp_tx,
+            })
+            .await
+        {
+            tracing::warn!(relay = %relay.node_id, "gov: peer discovery send failed: {e}");
+            continue;
+        }
+        futs.push((relay.node_id, resp_rx));
     }
 
-    let peers = match resp_rx.await {
-        Ok(Ok(resp)) => resp.peers,
-        Ok(Err(e)) => {
-            tracing::debug!(
-                relay = %relay.node_id,
-                "peer discovery failed: {e}"
-            );
-            return;
+    // Collect all responses
+    let mut all_peers = Vec::new();
+    for (relay_id, resp_rx) in futs {
+        match resp_rx.await {
+            Ok(Ok(resp)) => all_peers.extend(resp.peers),
+            Ok(Err(e)) => {
+                tracing::debug!(relay = %relay_id, "peer discovery failed: {e}");
+            }
+            Err(_) => {
+                tracing::debug!(relay = %relay_id, "peer discovery: response channel dropped");
+            }
         }
-        Err(_) => {
-            tracing::debug!("peer discovery: response channel dropped");
-            return;
-        }
-    };
+    }
 
-    if peers.is_empty() {
+    if all_peers.is_empty() {
         return;
     }
 
     let mut gov = governor.lock().await;
     let mut added = 0u32;
-    for pa in &peers {
+    for pa in &all_peers {
         let peer_id: PeerId = match pa.peer_id.parse() {
             Ok(id) => id,
             Err(_) => continue,
@@ -473,7 +481,7 @@ async fn discover_peers(
 
     if added > 0 {
         tracing::info!(
-            relay = %relay.node_id,
+            relays_queried = targets.len(),
             discovered = added,
             "peer discovery: registered new peers via gossip"
         );

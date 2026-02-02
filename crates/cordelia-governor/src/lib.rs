@@ -497,18 +497,22 @@ impl Governor {
     }
 
     fn promote_cold_to_warm(&mut self, actions: &mut GovernorActions) {
-        let (_, warm, cold, _) = self.counts();
-        if warm >= self.targets.warm_min {
+        let (hot, warm, cold, _) = self.counts();
+        // Drive toward warm_max: actively dial all known cold peers until
+        // warm + hot reaches warm_max (Cardano-style greedy promotion).
+        let active = warm + hot;
+        if active >= self.targets.warm_max {
             return;
         }
 
-        let needed = self.targets.warm_min - warm;
+        let needed = self.targets.warm_max - active;
         tracing::debug!(
             warm,
-            warm_min = self.targets.warm_min,
+            hot,
+            warm_max = self.targets.warm_max,
             needed,
             cold_available = cold,
-            "gov: need more warm peers"
+            "gov: promoting cold peers toward warm_max"
         );
         let now = Instant::now();
         let mut candidates: Vec<NodeId> = self
