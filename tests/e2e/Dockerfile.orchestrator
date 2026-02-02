@@ -14,8 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /tests
 
 # Copy test scripts and helpers
-COPY monitor.sh test-zoned-replication.sh smoke-test.sh topology.env runner.sh ./
-COPY lib/ ./lib/
+COPY monitor.sh test-zoned-replication.sh smoke-test.sh topology.env ./
 RUN chmod +x *.sh
 
 # Default bearer token matches Dockerfile.test
