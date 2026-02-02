@@ -180,7 +180,7 @@ pub async fn run_governor_loop(
 
                     for (boot, addr) in &resolved_bootnode_addrs {
                         if !active_addrs.contains(addr) {
-                            tracing::info!(
+                            tracing::warn!(
                                 bootnode = &boot.addr,
                                 %addr,
                                 "bootnode not connected, re-dialling"
