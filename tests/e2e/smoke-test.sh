@@ -167,7 +167,7 @@ HEALTHY=0
 for node in boot1 boot2 boot3; do
     TOTAL=$((TOTAL + 1))
     status=$(api "$node" "status" || echo '{}')
-    hot=$(echo "$status" | python3 -c "import sys,json; print(json.load(sys.stdin).get('peers_hot',0))" 2>/dev/null || echo 0)
+    hot=$(echo "$status" | jq -r '.peers_hot // 0' 2>/dev/null || echo 0)
     if [ "$hot" -gt 0 ]; then HEALTHY=$((HEALTHY + 1)); fi
 done
 
@@ -175,7 +175,7 @@ for org in "${ORG_NAMES[@]}"; do
     for i in 1 2; do
         TOTAL=$((TOTAL + 1))
         status=$(api "edge-${org}-${i}" "status" 2>/dev/null || echo '{}')
-        hot=$(echo "$status" | python3 -c "import sys,json; print(json.load(sys.stdin).get('peers_hot',0))" 2>/dev/null || echo 0)
+        hot=$(echo "$status" | jq -r '.peers_hot // 0' 2>/dev/null || echo 0)
         if [ "$hot" -gt 0 ]; then HEALTHY=$((HEALTHY + 1)); fi
     done
 done
