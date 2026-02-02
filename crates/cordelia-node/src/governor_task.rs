@@ -42,11 +42,14 @@ pub async fn run_governor_loop(
 
     // Seed bootnodes as cold peers (with retry for DNS resolution)
     let mut unresolved_bootnodes: Vec<BootnodeEntry> = Vec::new();
+    // Track resolved bootnode addrs for persistent reconnection
+    let mut resolved_bootnode_addrs: Vec<(BootnodeEntry, Multiaddr)> = Vec::new();
     {
         let mut gov = governor.lock().await;
         for boot in &bootnodes {
             if let Some(addr) = parse_bootnode_multiaddr(boot).await {
-                seed_bootnode(&mut gov, &boot.addr, addr);
+                seed_bootnode(&mut gov, &boot.addr, addr.clone());
+                resolved_bootnode_addrs.push((boot.clone(), addr));
             } else {
                 tracing::info!(bootnode = &boot.addr, "bootnode DNS pending, will retry");
                 unresolved_bootnodes.push(boot.clone());
@@ -149,7 +152,8 @@ pub async fn run_governor_loop(
                     for boot in unresolved_bootnodes.drain(..) {
                         if let Some(addr) = parse_bootnode_multiaddr(&boot).await {
                             tracing::info!(bootnode = &boot.addr, "bootnode resolved on retry");
-                            seed_bootnode(&mut gov, &boot.addr, addr);
+                            seed_bootnode(&mut gov, &boot.addr, addr.clone());
+                            resolved_bootnode_addrs.push((boot, addr));
                         } else {
                             still_unresolved.push(boot);
                         }
@@ -158,6 +162,39 @@ pub async fn run_governor_loop(
                     unresolved_bootnodes = still_unresolved;
                     if unresolved_bootnodes.is_empty() {
                         tracing::info!("all bootnodes resolved");
+                    }
+                }
+
+                // Persistent bootnode reconnection ("Conditions Of Acceptance"):
+                // if any resolved bootnode is not in the active peer pool,
+                // re-dial it. Bootnodes are critical infrastructure -- they
+                // must stay connected. Like a Culture Mind making contact,
+                // we keep trying whether the other end is ready or not.
+                if tick_count > 0 && tick_count.is_multiple_of(6) && !resolved_bootnode_addrs.is_empty() {
+                    let active_addrs: HashSet<Multiaddr> = pool
+                        .active_peers()
+                        .await
+                        .into_iter()
+                        .flat_map(|h| h.addrs)
+                        .collect();
+
+                    for (boot, addr) in &resolved_bootnode_addrs {
+                        if !active_addrs.contains(addr) {
+                            tracing::info!(
+                                bootnode = &boot.addr,
+                                %addr,
+                                "bootnode not connected, re-dialling"
+                            );
+                            // Re-resolve DNS in case IP changed
+                            let dial_addr = if let Some(fresh) = parse_bootnode_multiaddr(boot).await {
+                                fresh
+                            } else {
+                                addr.clone()
+                            };
+                            if let Err(e) = cmd_tx.send(SwarmCommand::Dial(dial_addr)).await {
+                                tracing::warn!(bootnode = &boot.addr, "bootnode re-dial send failed: {e}");
+                            }
+                        }
                     }
                 }
 
