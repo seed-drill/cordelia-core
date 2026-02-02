@@ -44,18 +44,24 @@ The default topology is 219 nodes across 12 orgs (see `topology.env`).
 # 1. Build the node image
 docker build -t cordelia-node:test -f tests/e2e/Dockerfile.test .
 
-# 2. Build the orchestrator image
+# 2. Build the proxy image (from cordelia-proxy repo)
+docker build -t cordelia-proxy:test -f ../cordelia-proxy/Dockerfile ../cordelia-proxy/
+
+# 3. Build the orchestrator image
 docker build -t cordelia-orchestrator -f tests/e2e/Dockerfile.orchestrator tests/e2e/
 
-# 3. Generate the compose file
+# 4. Generate the compose file
 cd tests/e2e
 bash gen-compose-zoned.sh
 
-# 4. Start the topology (~1 minute for 219 nodes with staggered startup)
+# 5. Start the topology (~1 minute for 219 nodes with staggered startup)
 docker compose -f docker-compose.generated.yml up -d
 
-# 5. Run smoke tests
+# 6. Run smoke tests
 docker exec cordelia-e2e-orchestrator ./smoke-test.sh
+
+# 7. Access the proxy REST API + Swagger docs
+open http://localhost:3847/api/docs
 ```
 
 ## Files
@@ -135,6 +141,31 @@ docker exec cordelia-e2e-orchestrator ./smoke-test.sh
 # Watch cluster health
 docker exec cordelia-e2e-orchestrator ./monitor.sh --watch
 ```
+
+## Proxy (REST API + Dashboard)
+
+The proxy container (`cordelia-proxy:test`) runs on the backbone network and
+connects to `boot1` as its upstream node. It provides:
+
+- **REST API** on port 3847 -- full CRUD for L1/L2 memory, groups, users
+- **Swagger docs** at `http://localhost:3847/api/docs`
+- **Dashboard** at `http://localhost:3847/`
+- **MCP endpoints** (SSE + StreamableHTTP) for Claude Code integration
+
+Default credentials: `admin:admin`
+
+```bash
+# Check proxy health
+curl http://localhost:3847/api/health
+
+# Check node connectivity (proxied from boot1)
+curl http://localhost:3847/api/core/status
+
+# Browse the API
+open http://localhost:3847/api/docs
+```
+
+Disable the proxy with `PROXY_ENABLED=0` in `topology.env` or as an env var override.
 
 ## Smoke Test Suite
 

@@ -41,6 +41,9 @@ _save_GOV_WARM_MAX="${GOV_WARM_MAX-}"
 _save_GOV_COLD_MAX="${GOV_COLD_MAX-}"
 _save_SYNC_MODERATE="${SYNC_MODERATE-}"
 _save_SYNC_TACITURN="${SYNC_TACITURN-}"
+_save_PROXY_ENABLED="${PROXY_ENABLED-}"
+_save_PROXY_IMAGE="${PROXY_IMAGE-}"
+_save_PROXY_PORT="${PROXY_PORT-}"
 
 if [ -f "$DIR/topology.env" ]; then
     set -a
@@ -63,6 +66,9 @@ fi
 [ -n "$_save_GOV_COLD_MAX" ] && GOV_COLD_MAX="$_save_GOV_COLD_MAX"
 [ -n "$_save_SYNC_MODERATE" ] && SYNC_MODERATE="$_save_SYNC_MODERATE"
 [ -n "$_save_SYNC_TACITURN" ] && SYNC_TACITURN="$_save_SYNC_TACITURN"
+[ -n "$_save_PROXY_ENABLED" ] && PROXY_ENABLED="$_save_PROXY_ENABLED"
+[ -n "$_save_PROXY_IMAGE" ] && PROXY_IMAGE="$_save_PROXY_IMAGE"
+[ -n "$_save_PROXY_PORT" ] && PROXY_PORT="$_save_PROXY_PORT"
 
 # Apply hardcoded defaults for anything still unset
 BACKBONE_COUNT="${BACKBONE_COUNT:-3}"
@@ -79,6 +85,9 @@ GOV_WARM_MAX="${GOV_WARM_MAX:-50}"
 GOV_COLD_MAX="${GOV_COLD_MAX:-100}"
 SYNC_MODERATE="${SYNC_MODERATE:-10}"
 SYNC_TACITURN="${SYNC_TACITURN:-30}"
+PROXY_ENABLED="${PROXY_ENABLED:-1}"
+PROXY_IMAGE="${PROXY_IMAGE:-cordelia-proxy:test}"
+PROXY_PORT="${PROXY_PORT:-3847}"
 
 mkdir -p "$OUT_DIR"
 
@@ -383,6 +392,40 @@ EOF
     done
 }
 
+# Proxy: REST API + dashboard, connected to backbone (talks to boot1)
+if [ "${PROXY_ENABLED}" = "1" ]; then
+    cat >> "$COMPOSE_FILE" <<EOF
+
+  proxy:
+    image: ${PROXY_IMAGE}
+    hostname: proxy
+    container_name: cordelia-e2e-proxy
+    ports:
+      - "${PROXY_PORT}:3847"
+    volumes:
+      - proxy-memory:/app/memory
+    environment:
+      - CORDELIA_STORAGE=sqlite
+      - CORDELIA_NODE_URL=http://boot1:9473
+      - CORDELIA_NODE_TOKEN=${BEARER_TOKEN}
+      - CORDELIA_LOCAL_USERS=admin:admin
+      - CORDELIA_HTTP_PORT=3847
+      - CORDELIA_EMBEDDING_PROVIDER=none
+      - NODE_ENV=production
+    depends_on:
+      boot1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3847/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks:
+      - backbone
+
+EOF
+fi
+
 # Networks
 cat >> "$COMPOSE_FILE" <<EOF
 networks:
@@ -398,11 +441,23 @@ for o in $(seq 0 $((ORG_COUNT - 1))); do
 EOF
 done
 
+# Volumes (proxy needs persistent storage)
+if [ "${PROXY_ENABLED}" = "1" ]; then
+    cat >> "$COMPOSE_FILE" <<EOF
+
+volumes:
+  proxy-memory:
+EOF
+fi
+
 echo ""
 echo "Generated ${TOTAL} node configs in ${OUT_DIR}/"
 echo "Generated ${COMPOSE_FILE}"
 echo ""
 echo "Topology map:"
+if [ "${PROXY_ENABLED}" = "1" ]; then
+    echo "  [backbone]           proxy (REST API + dashboard on port ${PROXY_PORT})"
+fi
 echo "  [backbone]           boot1..boot${BACKBONE_COUNT}"
 if [ "$BACKBONE_PERSONAL" -gt 0 ]; then
     echo "  [backbone]           agent-bb-1..agent-bb-${BACKBONE_PERSONAL} (personal)"
