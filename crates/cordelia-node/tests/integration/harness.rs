@@ -3,13 +3,14 @@
 //! Provides TestNode (single node), TestNodeBuilder (config), and TestMesh
 //! (N-node orchestrator) for running real libp2p swarms in the same tokio runtime.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use cordelia_api::{AppState, ReplicationStats};
 use cordelia_crypto::NodeIdentity;
 use cordelia_governor::{DialPolicy, Governor, GovernorTargets};
-use cordelia_node::config::{BootnodeEntry, NodeRole};
+use cordelia_node::config::{BootnodeEntry, NodeRole, RelayPosture};
 use cordelia_node::{governor_task, peer_pool, replication_task, swarm_task, StorageClone};
 use cordelia_replication::{ReplicationConfig, ReplicationEngine};
 use cordelia_storage::SqliteStorage;
@@ -30,6 +31,25 @@ pub fn test_node_count(default: usize) -> usize {
 pub fn scaled_timeout(n: usize, base_secs: u64) -> Duration {
     let factor = ((n as f64) / 3.0).ceil().max(1.0) as u64;
     Duration::from_secs(base_secs * factor)
+}
+
+/// Read TEST_WORKER_THREADS from environment, falling back to `default`.
+/// Use this to build a multi-thread tokio runtime with configurable parallelism.
+pub fn test_worker_threads(default: usize) -> usize {
+    std::env::var("TEST_WORKER_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Build a multi-thread tokio runtime with TEST_WORKER_THREADS worker threads.
+pub fn build_test_runtime(default_workers: usize) -> tokio::runtime::Runtime {
+    let workers = test_worker_threads(default_workers);
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime")
 }
 
 /// A running in-process node with all four tasks (swarm, governor, replication, API).
@@ -238,6 +258,8 @@ pub struct TestNodeBuilder {
     bootnodes: Vec<Multiaddr>,
     governor_targets: GovernorTargets,
     replication_config: ReplicationConfig,
+    relay_posture: Option<RelayPosture>,
+    relay_blocked_groups: HashSet<String>,
 }
 
 #[allow(dead_code)]
@@ -263,6 +285,8 @@ impl TestNodeBuilder {
                 tombstone_retention_days: 7,
                 max_batch_size: 100,
             },
+            relay_posture: None,
+            relay_blocked_groups: HashSet::new(),
         }
     }
 
@@ -293,6 +317,16 @@ impl TestNodeBuilder {
 
     pub fn replication_config(mut self, config: ReplicationConfig) -> Self {
         self.replication_config = config;
+        self
+    }
+
+    pub fn relay_posture(mut self, posture: RelayPosture) -> Self {
+        self.relay_posture = Some(posture);
+        self
+    }
+
+    pub fn relay_blocked_groups(mut self, groups: HashSet<String>) -> Self {
+        self.relay_blocked_groups = groups;
         self
     }
 
@@ -381,6 +415,33 @@ impl TestNodeBuilder {
         // Replication engine
         let repl_engine = ReplicationEngine::new(self.replication_config.clone(), self.name.clone());
 
+        // Relay state
+        let is_relay = self.role == NodeRole::Relay && self.relay_posture.is_some();
+        let relay_posture_val = if self.role == NodeRole::Relay {
+            self.relay_posture
+        } else {
+            None
+        };
+        let relay_blocked = Arc::new(self.relay_blocked_groups.clone());
+
+        let relay_accepted_groups: Option<Arc<RwLock<HashSet<String>>>> =
+            match relay_posture_val {
+                Some(RelayPosture::Dynamic) => Some(Arc::new(RwLock::new(HashSet::new()))),
+                Some(RelayPosture::Explicit) => {
+                    // For explicit, the builder would need allowed_groups.
+                    // For tests, start with empty and let the test populate.
+                    Some(Arc::new(RwLock::new(HashSet::new())))
+                }
+                _ => None,
+            };
+
+        let relay_learned_groups: Option<Arc<RwLock<HashSet<String>>>> =
+            if relay_posture_val == Some(RelayPosture::Dynamic) {
+                relay_accepted_groups.clone()
+            } else {
+                None
+            };
+
         // Channels
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<swarm_task::SwarmCommand>(256);
         let (event_tx, _) = broadcast::channel::<swarm_task::SwarmEvent2>(256);
@@ -395,6 +456,8 @@ impl TestNodeBuilder {
             let pool = pool.clone();
             let shutdown = shutdown_tx.subscribe();
             let role = self.role;
+            let relay_accepted = relay_accepted_groups.clone();
+            let relay_blocked = relay_blocked.clone();
             handles.push(tokio::spawn(async move {
                 swarm_task::run_swarm_loop(
                     swarm,
@@ -404,6 +467,9 @@ impl TestNodeBuilder {
                     shared_groups,
                     pool,
                     role,
+                    relay_posture_val,
+                    relay_accepted,
+                    relay_blocked,
                     shutdown,
                 )
                 .await;
@@ -425,6 +491,7 @@ impl TestNodeBuilder {
                 .collect();
             let shared_groups = shared_groups.clone();
             let shutdown = shutdown_tx.subscribe();
+            let relay_learned = relay_learned_groups.clone();
             handles.push(tokio::spawn(async move {
                 governor_task::run_governor_loop(
                     governor,
@@ -433,6 +500,7 @@ impl TestNodeBuilder {
                     event_rx,
                     bootnodes,
                     shared_groups,
+                    relay_learned,
                     peer_id,
                     shutdown,
                 )
@@ -448,6 +516,7 @@ impl TestNodeBuilder {
             let cmd_tx = cmd_tx.clone();
             let shutdown = shutdown_tx.subscribe();
             let stats = repl_stats.clone();
+            let relay_learned = relay_learned_groups.clone();
             handles.push(tokio::spawn(async move {
                 replication_task::run_replication_loop(
                     repl_engine,
@@ -458,6 +527,8 @@ impl TestNodeBuilder {
                     write_rx,
                     shutdown,
                     stats,
+                    is_relay,
+                    relay_learned,
                 )
                 .await;
             }));

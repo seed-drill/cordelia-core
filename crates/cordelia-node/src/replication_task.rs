@@ -5,7 +5,7 @@
 //!   2. Flush timer (100ms) -> batch dispatch buffered items to hot peers
 //!   3. Anti-entropy timer -> per-group sync with random hot peer (per-culture interval)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use cordelia_protocol::era::CURRENT_ERA;
 use cordelia_protocol::messages::{FetchRequest, FetchedItem, MemoryPushRequest, SyncRequest};
 use cordelia_replication::{GroupCulture, ReceiveOutcome, ReplicationEngine};
 use cordelia_storage::Storage;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::time::Instant;
 
 use crate::peer_pool::PeerPool;
@@ -29,16 +29,22 @@ struct PendingPush {
 }
 
 /// Run the replication loop until shutdown.
+///
+/// `is_relay`: whether this node is a relay (affects peer selection for push/sync).
+/// `relay_learned_groups`: for dynamic relays, the set of groups learned from peers.
+///   Used to expand anti-entropy group list beyond our own memberships.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_replication_loop(
     engine: ReplicationEngine,
     pool: PeerPool,
     storage: Arc<dyn Storage>,
-    shared_groups: Arc<tokio::sync::RwLock<Vec<String>>>,
+    shared_groups: Arc<RwLock<Vec<String>>>,
     cmd_tx: mpsc::Sender<SwarmCommand>,
     mut write_rx: broadcast::Receiver<WriteNotification>,
     mut shutdown: broadcast::Receiver<()>,
     stats: Arc<ReplicationStats>,
+    is_relay: bool,
+    relay_learned_groups: Option<Arc<RwLock<HashSet<String>>>>,
 ) {
     // Base tick for per-culture sync scheduling (fastest culture interval = 60s for chatty)
     let mut sync_base_tick = tokio::time::interval(std::time::Duration::from_secs(
@@ -152,7 +158,8 @@ pub async fn run_replication_loop(
                         continue;
                     }
                     let item_count = items.len();
-                    let peers = pool.active_peers_for_group(&group_id).await;
+                    // All nodes push to group peers + relays (relays forward cross-zone)
+                    let peers = pool.active_peers_for_group_or_relays(&group_id).await;
 
                     if peers.is_empty() {
                         tracing::info!(
@@ -229,7 +236,7 @@ pub async fn run_replication_loop(
                         keep.push(pending);
                         continue;
                     }
-                    let peers = pool.active_peers_for_group(&pending.group_id).await;
+                    let peers = pool.active_peers_for_group_or_relays(&pending.group_id).await;
                     if !peers.is_empty() {
                         tracing::info!(
                             group = pending.group_id.as_str(),
@@ -285,7 +292,27 @@ pub async fn run_replication_loop(
             // Per-culture anti-entropy sync (base tick fires at fastest interval)
             _ = sync_base_tick.tick() => {
                 let now = Instant::now();
-                let current_groups = shared_groups.read().await.clone();
+                let mut current_groups = shared_groups.read().await.clone();
+
+                // Relays: also sync groups we've learned from peers and stored locally
+                if is_relay {
+                    if let Some(ref learned) = relay_learned_groups {
+                        let learned_set = learned.read().await;
+                        for g in learned_set.iter() {
+                            if !current_groups.contains(g) {
+                                current_groups.push(g.clone());
+                            }
+                        }
+                    }
+                    if let Ok(stored) = storage.list_stored_group_ids() {
+                        for g in stored {
+                            if !current_groups.contains(&g) {
+                                current_groups.push(g);
+                            }
+                        }
+                    }
+                }
+
                 for group_id in &current_groups {
                     // Check if this group is due for sync
                     let deadline = next_sync_at.get(group_id).copied();
@@ -316,6 +343,14 @@ pub async fn run_replication_loop(
                         last_sync_at.get(group_id).cloned()
                     };
 
+                    // Build relay acceptance set for anti-entropy receive.
+                    // For relays, accept items from the group universe we're syncing.
+                    let relay_accept_set: Option<HashSet<String>> = if is_relay {
+                        Some(current_groups.iter().cloned().collect())
+                    } else {
+                        None
+                    };
+
                     match run_anti_entropy(
                         &engine,
                         &pool,
@@ -325,6 +360,8 @@ pub async fn run_replication_loop(
                         &cmd_tx,
                         since.as_deref(),
                         &stats,
+                        is_relay,
+                        relay_accept_set.as_ref(),
                     ).await {
                         Ok(latest_ts) => {
                             stats.sync_rounds.fetch_add(1, Ordering::Relaxed);
@@ -383,6 +420,9 @@ fn split_into_batches(items: &[FetchedItem]) -> Vec<Vec<FetchedItem>> {
 
 /// Run anti-entropy sync for a single group via SwarmCommand.
 /// Returns the latest `updated_at` from remote headers on success (for incremental sync).
+///
+/// `relay_accept_set`: if Some, this node is a relay and items for groups in
+///   this set are accepted. If None, normal group membership applies.
 #[allow(clippy::too_many_arguments)]
 async fn run_anti_entropy(
     engine: &ReplicationEngine,
@@ -393,8 +433,14 @@ async fn run_anti_entropy(
     cmd_tx: &mpsc::Sender<SwarmCommand>,
     since: Option<&str>,
     stats: &Arc<ReplicationStats>,
+    is_relay: bool,
+    relay_accept_set: Option<&HashSet<String>>,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
-    let peer = match pool.random_hot_peer_for_group(group_id).await {
+    let peer = match if is_relay {
+        pool.random_hot_peer_for_group_or_relays(group_id).await
+    } else {
+        pool.random_hot_peer_for_group(group_id).await
+    } {
         Some(p) => p,
         None => {
             tracing::debug!(group = group_id, "repl: no peers available");
@@ -497,7 +543,12 @@ async fn run_anti_entropy(
             .map_err(|e| format!("fetch request failed: {e}"))?;
 
         for item in &fetch_resp.items {
-            let outcome = engine.on_receive(storage.as_ref(), item, our_groups);
+            let relay_fn = relay_accept_set.map(|set| {
+                move |gid: &str| -> bool { set.contains(gid) }
+            });
+            let relay_ref: Option<&dyn Fn(&str) -> bool> =
+                relay_fn.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+            let outcome = engine.on_receive(storage.as_ref(), item, our_groups, relay_ref);
             match &outcome {
                 ReceiveOutcome::Stored => {
                     stored += 1;

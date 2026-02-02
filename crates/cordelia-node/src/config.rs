@@ -2,6 +2,7 @@
 //! Parsed from ~/.cordelia/config.toml.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
@@ -45,6 +46,64 @@ impl FromStr for NodeRole {
     }
 }
 
+/// Relay forwarding posture -- controls which groups a relay accepts items for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayPosture {
+    /// Backbone relays: accept and forward items for ANY group.
+    Transparent,
+    /// Edge relays (default): learn groups from connected non-relay peers.
+    Dynamic,
+    /// Locked-down edges: only forward groups in `allowed_groups` config.
+    Explicit,
+}
+
+impl FromStr for RelayPosture {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "transparent" => Ok(RelayPosture::Transparent),
+            "dynamic" => Ok(RelayPosture::Dynamic),
+            "explicit" => Ok(RelayPosture::Explicit),
+            other => Err(format!("unknown relay posture: {other}")),
+        }
+    }
+}
+
+impl fmt::Display for RelayPosture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RelayPosture::Transparent => f.write_str("transparent"),
+            RelayPosture::Dynamic => f.write_str("dynamic"),
+            RelayPosture::Explicit => f.write_str("explicit"),
+        }
+    }
+}
+
+/// Relay-specific configuration. Ignored by personal/keeper nodes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelaySection {
+    #[serde(default = "default_dynamic_posture")]
+    pub posture: String,
+    #[serde(default)]
+    pub allowed_groups: Vec<String>,
+    #[serde(default)]
+    pub blocked_groups: Vec<String>,
+}
+
+impl Default for RelaySection {
+    fn default() -> Self {
+        Self {
+            posture: "dynamic".into(),
+            allowed_groups: Vec::new(),
+            blocked_groups: Vec::new(),
+        }
+    }
+}
+
+fn default_dynamic_posture() -> String {
+    "dynamic".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
     pub node: NodeSection,
@@ -54,6 +113,8 @@ pub struct NodeConfig {
     pub governor: GovernorSection,
     #[serde(default)]
     pub replication: ReplicationSection,
+    #[serde(default)]
+    pub relay: Option<RelaySection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,6 +279,33 @@ impl NodeConfig {
         self.node.role.parse().unwrap_or(NodeRole::Personal)
     }
 
+    /// Parse the configured relay posture. Non-relay nodes return Dynamic (irrelevant).
+    pub fn relay_posture(&self) -> RelayPosture {
+        if self.role() != NodeRole::Relay {
+            return RelayPosture::Dynamic; // irrelevant for non-relays
+        }
+        self.relay
+            .as_ref()
+            .map(|r| r.posture.parse().unwrap_or(RelayPosture::Dynamic))
+            .unwrap_or(RelayPosture::Dynamic)
+    }
+
+    /// Get the set of explicitly allowed groups (only meaningful for Explicit posture).
+    pub fn relay_allowed_groups(&self) -> HashSet<String> {
+        self.relay
+            .as_ref()
+            .map(|r| r.allowed_groups.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get the deny-list of blocked groups (applied on top of any posture).
+    pub fn relay_blocked_groups(&self) -> HashSet<String> {
+        self.relay
+            .as_ref()
+            .map(|r| r.blocked_groups.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Governor targets capped by role.
     /// Personal: hot 2-5, warm 5-10. Keeper: hot 1-3, warm 2-5.
     /// Relay: use config values as-is.
@@ -257,6 +345,7 @@ impl Default for NodeConfig {
             network: NetworkSection::default(),
             governor: GovernorSection::default(),
             replication: ReplicationSection::default(),
+            relay: None,
         }
     }
 }
@@ -393,5 +482,68 @@ role = "relay"
         let toml_str = toml::to_string_pretty(&cfg).unwrap();
         assert!(toml_str.contains("[node]"));
         assert!(toml_str.contains("entity_id"));
+    }
+
+    #[test]
+    fn test_relay_posture_default_dynamic() {
+        let toml_str = r#"
+[node]
+role = "relay"
+"#;
+        let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.relay_posture(), RelayPosture::Dynamic);
+    }
+
+    #[test]
+    fn test_relay_posture_transparent() {
+        let toml_str = r#"
+[node]
+role = "relay"
+
+[relay]
+posture = "transparent"
+"#;
+        let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.relay_posture(), RelayPosture::Transparent);
+    }
+
+    #[test]
+    fn test_relay_posture_explicit_with_groups() {
+        let toml_str = r#"
+[node]
+role = "relay"
+
+[relay]
+posture = "explicit"
+allowed_groups = ["alpha-internal", "shared-xorg"]
+blocked_groups = ["blacklisted"]
+"#;
+        let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.relay_posture(), RelayPosture::Explicit);
+        assert!(cfg.relay_allowed_groups().contains("alpha-internal"));
+        assert!(cfg.relay_allowed_groups().contains("shared-xorg"));
+        assert!(cfg.relay_blocked_groups().contains("blacklisted"));
+    }
+
+    #[test]
+    fn test_personal_node_ignores_relay_section() {
+        let toml_str = r#"
+[node]
+role = "personal"
+
+[relay]
+posture = "transparent"
+"#;
+        let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
+        // Non-relay nodes always return Dynamic (irrelevant)
+        assert_eq!(cfg.relay_posture(), RelayPosture::Dynamic);
+    }
+
+    #[test]
+    fn test_relay_posture_parse() {
+        assert_eq!("transparent".parse::<RelayPosture>().unwrap(), RelayPosture::Transparent);
+        assert_eq!("dynamic".parse::<RelayPosture>().unwrap(), RelayPosture::Dynamic);
+        assert_eq!("explicit".parse::<RelayPosture>().unwrap(), RelayPosture::Explicit);
+        assert!("unknown".parse::<RelayPosture>().is_err());
     }
 }

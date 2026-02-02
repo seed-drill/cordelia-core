@@ -132,6 +132,16 @@ gen_config() {
     local role="$2"       # relay, keeper, or personal
     local bootnodes="$3"  # newline-separated bootnode TOML blocks
     local trusted="$4"    # newline-separated trusted_relays TOML blocks (keeper only)
+    local relay_posture="$5"  # optional: "transparent" or "dynamic"
+
+    local relay_section=""
+    if [ -n "${relay_posture}" ]; then
+        relay_section="
+[relay]
+posture = \"${relay_posture}\"
+allowed_groups = []
+blocked_groups = []"
+    fi
 
     cat > "$OUT_DIR/config-${hostname}.toml" <<TOML
 [node]
@@ -161,6 +171,7 @@ sync_interval_moderate_secs = ${SYNC_MODERATE}
 sync_interval_taciturn_secs = ${SYNC_TACITURN}
 tombstone_retention_days = 7
 max_batch_size = 100
+${relay_section}
 TOML
 }
 
@@ -256,21 +267,21 @@ addr = \"edge-${org}-${e}:9474\""
 # Generate configs
 # ============================================================================
 
-# Backbone relays -- bootnode to each other
+# Backbone relays -- bootnode to each other, transparent posture
 for i in $(seq 1 "$BACKBONE_COUNT"); do
-    gen_config "boot${i}" "relay" "$(backbone_bootnodes_except "$i")" ""
+    gen_config "boot${i}" "relay" "$(backbone_bootnodes_except "$i")" "" "transparent"
 done
 
 # Backbone personal nodes -- bootnode to all backbone relays
 for i in $(seq 1 "$BACKBONE_PERSONAL"); do
-    gen_config "agent-bb-${i}" "personal" "$(backbone_bootnodes_all)" ""
+    gen_config "agent-bb-${i}" "personal" "$(backbone_bootnodes_all)" "" ""
 done
 
-# Per-org: edge relays -- bootnode to backbone
+# Per-org: edge relays -- bootnode to backbone, dynamic posture
 for o in $(seq 0 $((ORG_COUNT - 1))); do
     org="${ORG_NAMES[$o]}"
     for e in $(seq 1 "${ORG_EDGES[$o]}"); do
-        gen_config "edge-${org}-${e}" "relay" "$(backbone_bootnodes_all)" ""
+        gen_config "edge-${org}-${e}" "relay" "$(backbone_bootnodes_all)" "" "dynamic"
     done
 done
 
@@ -280,7 +291,7 @@ for o in $(seq 0 $((ORG_COUNT - 1))); do
     for k in $(seq 1 "${ORG_KEEPERS[$o]}"); do
         gen_config "keeper-${org}-${k}" "keeper" \
             "$(org_edge_bootnodes "$org" "$o")" \
-            "$(org_edge_trusted "$org" "$o")"
+            "$(org_edge_trusted "$org" "$o")" ""
     done
 done
 
@@ -289,7 +300,7 @@ for o in $(seq 0 $((ORG_COUNT - 1))); do
     org="${ORG_NAMES[$o]}"
     for p in $(seq 1 "${ORG_PERSONALS[$o]}"); do
         gen_config "agent-${org}-${p}" "personal" \
-            "$(org_edge_bootnodes "$org" "$o")" ""
+            "$(org_edge_bootnodes "$org" "$o")" "" ""
     done
 done
 

@@ -5,7 +5,7 @@
 //!   cordelia-node --config path.toml   # Run with custom config
 //!   cordelia-node identity             # Show node identity
 
-use cordelia_node::config;
+use cordelia_node::config::{self, RelayPosture};
 use cordelia_node::governor_task;
 use cordelia_node::peer_pool;
 use cordelia_node::replication_task;
@@ -308,6 +308,46 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     };
     let repl_engine = ReplicationEngine::new(repl_config, cfg.node.entity_id.clone());
 
+    // Build relay state (only relevant for relay nodes)
+    let relay_posture_val = if our_role == config::NodeRole::Relay {
+        Some(cfg.relay_posture())
+    } else {
+        None
+    };
+    let relay_blocked = Arc::new(cfg.relay_blocked_groups());
+
+    // For dynamic/explicit relays: build the accepted groups set.
+    // For dynamic: starts empty, populated by governor via GroupExchange.
+    // For explicit: pre-populated from config.
+    // For transparent: not used (acceptance is always true).
+    let relay_accepted_groups: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>> =
+        match relay_posture_val {
+            Some(RelayPosture::Dynamic) => {
+                Some(Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())))
+            }
+            Some(RelayPosture::Explicit) => {
+                Some(Arc::new(tokio::sync::RwLock::new(cfg.relay_allowed_groups())))
+            }
+            _ => None,
+        };
+
+    // For dynamic relays, the governor needs to write to this same set.
+    // We alias it as relay_learned_groups for clarity.
+    let relay_learned_groups: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>> =
+        if relay_posture_val == Some(RelayPosture::Dynamic) {
+            relay_accepted_groups.clone()
+        } else {
+            None
+        };
+
+    if let Some(posture) = relay_posture_val {
+        tracing::info!(
+            posture = %posture,
+            blocked = relay_blocked.len(),
+            "relay posture configured"
+        );
+    }
+
     // Create swarm command/event channels
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<swarm_task::SwarmCommand>(256);
     let (event_tx, _) = tokio::sync::broadcast::channel::<swarm_task::SwarmEvent2>(256);
@@ -319,6 +359,8 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let event_tx = event_tx.clone();
         let pool = pool.clone();
         let shutdown = shutdown_tx.subscribe();
+        let relay_accepted = relay_accepted_groups.clone();
+        let relay_blocked = relay_blocked.clone();
         tokio::spawn(async move {
             swarm_task::run_swarm_loop(
                 swarm,
@@ -328,6 +370,9 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 shared_groups,
                 pool,
                 our_role,
+                relay_posture_val,
+                relay_accepted,
+                relay_blocked,
                 shutdown,
             )
             .await;
@@ -343,6 +388,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let bootnodes = cfg.network.bootnodes.clone();
         let shared_groups = shared_groups.clone();
         let shutdown = shutdown_tx.subscribe();
+        let relay_learned = relay_learned_groups.clone();
         tokio::spawn(async move {
             governor_task::run_governor_loop(
                 governor,
@@ -351,6 +397,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 event_rx,
                 bootnodes,
                 shared_groups,
+                relay_learned,
                 our_peer_id,
                 shutdown,
             )
@@ -366,6 +413,8 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let cmd_tx = cmd_tx.clone();
         let shutdown = shutdown_tx.subscribe();
         let stats = repl_stats.clone();
+        let is_relay = our_role == config::NodeRole::Relay;
+        let relay_learned = relay_learned_groups.clone();
         tokio::spawn(async move {
             replication_task::run_replication_loop(
                 repl_engine,
@@ -376,6 +425,8 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 write_rx,
                 shutdown,
                 stats,
+                is_relay,
+                relay_learned,
             )
             .await;
         })

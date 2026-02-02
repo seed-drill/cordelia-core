@@ -150,6 +150,10 @@ pub trait Storage: Send + Sync {
     // FTS search (used by API search endpoint)
     fn fts_search(&self, query: &str, limit: u32) -> Result<Vec<String>>;
 
+    /// List distinct group IDs that have items stored locally.
+    /// Used by relays to discover which groups they hold items for (anti-entropy).
+    fn list_stored_group_ids(&self) -> Result<Vec<String>>;
+
     // Storage stats (mempool diagnostics)
     fn storage_stats(&self) -> Result<StorageStats>;
 }
@@ -641,6 +645,16 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
+    fn list_stored_group_ids(&self) -> Result<Vec<String>> {
+        let conn = self.db()?;
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT group_id FROM l2_items WHERE group_id IS NOT NULL")?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
     fn storage_stats(&self) -> Result<StorageStats> {
         let conn = self.db()?;
 
@@ -968,6 +982,52 @@ mod tests {
         assert!(storage.read_group("grp-d").unwrap().is_none());
         assert!(storage.list_members("grp-d").unwrap().is_empty());
         assert!(!storage.delete_group("grp-d").unwrap()); // already deleted
+    }
+
+    #[test]
+    fn test_list_stored_group_ids() {
+        let (_dir, storage) = test_db();
+
+        // No items yet
+        assert!(storage.list_stored_group_ids().unwrap().is_empty());
+
+        // Add items in two groups
+        for (id, group) in &[("a", "group-alpha"), ("b", "group-alpha"), ("c", "group-bravo")] {
+            storage
+                .write_l2_item(&L2ItemWrite {
+                    id: id.to_string(),
+                    item_type: "entity".into(),
+                    data: b"blob".to_vec(),
+                    owner_id: None,
+                    visibility: "group".into(),
+                    group_id: Some(group.to_string()),
+                    author_id: None,
+                    key_version: 1,
+                    parent_id: None,
+                    is_copy: false,
+                })
+                .unwrap();
+        }
+
+        // Also add a private item (no group_id)
+        storage
+            .write_l2_item(&L2ItemWrite {
+                id: "d".into(),
+                item_type: "entity".into(),
+                data: b"blob".to_vec(),
+                owner_id: None,
+                visibility: "private".into(),
+                group_id: None,
+                author_id: None,
+                key_version: 1,
+                parent_id: None,
+                is_copy: false,
+            })
+            .unwrap();
+
+        let mut ids = storage.list_stored_group_ids().unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["group-alpha", "group-bravo"]);
     }
 
     #[test]

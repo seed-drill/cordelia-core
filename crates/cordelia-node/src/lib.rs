@@ -111,6 +111,9 @@ impl cordelia_storage::Storage for StorageClone {
     fn fts_search(&self, query: &str, limit: u32) -> cordelia_storage::Result<Vec<String>> {
         self.0.fts_search(query, limit)
     }
+    fn list_stored_group_ids(&self) -> cordelia_storage::Result<Vec<String>> {
+        self.0.list_stored_group_ids()
+    }
     fn storage_stats(&self) -> cordelia_storage::Result<cordelia_storage::StorageStats> {
         self.0.storage_stats()
     }

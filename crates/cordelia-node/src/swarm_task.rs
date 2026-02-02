@@ -10,7 +10,7 @@ use libp2p::futures::StreamExt;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{identity, Multiaddr, PeerId, StreamProtocol, Swarm};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
@@ -175,6 +175,11 @@ pub fn build_swarm(
 
 /// Run the swarm event loop. Handles commands from governor/replication and
 /// dispatches inbound requests to storage.
+///
+/// `relay_accepted_groups`: for relay nodes, the set of groups this relay accepts.
+///   For transparent relays this is None (accept all). For dynamic/explicit, it's the
+///   computed acceptance set. Non-relay nodes pass None.
+/// `relay_blocked_groups`: deny-list applied on top of any posture.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_swarm_loop(
     mut swarm: Swarm<CordeliaBehaviour>,
@@ -184,6 +189,9 @@ pub async fn run_swarm_loop(
     shared_groups: Arc<RwLock<Vec<String>>>,
     pool: crate::peer_pool::PeerPool,
     our_role: crate::config::NodeRole,
+    relay_posture: Option<crate::config::RelayPosture>,
+    relay_accepted_groups: Option<Arc<RwLock<HashSet<String>>>>,
+    relay_blocked_groups: Arc<HashSet<String>>,
     mut shutdown: broadcast::Receiver<()>,
 ) {
     // Track pending outbound request-response channels
@@ -334,6 +342,98 @@ pub async fn run_swarm_loop(
                         );
                         let resp = PeerShareResponse { peers };
                         let _ = swarm.behaviour_mut().peer_share.send_response(channel, resp);
+                    }
+                    // Memory push inbound: handled here for async pool access (relay re-push)
+                    SwarmEvent::Behaviour(CordeliaBehaviourEvent::MemoryPush(
+                        request_response::Event::Message {
+                            message: request_response::Message::Request { request, channel, .. },
+                            peer,
+                            ..
+                        },
+                    )) => {
+                        let groups_snap = shared_groups.read().await.clone();
+
+                        // Snapshot relay acceptance for this push
+                        let accepted_snap: Option<HashSet<String>> = match relay_posture {
+                            Some(crate::config::RelayPosture::Dynamic)
+                            | Some(crate::config::RelayPosture::Explicit) => {
+                                relay_accepted_groups.as_ref().map(|a| {
+                                    // We're in async context, use try_read to avoid deadlock.
+                                    // If lock is held, fall back to empty (conservative).
+                                    a.try_read().map(|g| g.clone()).unwrap_or_default()
+                                })
+                            }
+                            _ => None,
+                        };
+                        let blocked_snap = relay_blocked_groups.clone();
+                        let is_transparent = relay_posture == Some(crate::config::RelayPosture::Transparent);
+
+                        let relay_check = if relay_posture.is_some() {
+                            let check = move |gid: &str| -> bool {
+                                if blocked_snap.contains(gid) {
+                                    return false;
+                                }
+                                if is_transparent {
+                                    return true;
+                                }
+                                accepted_snap.as_ref().map_or(false, |s| s.contains(gid))
+                            };
+                            Some(check)
+                        } else {
+                            None
+                        };
+                        let relay_accepts_ref: Option<&dyn Fn(&str) -> bool> =
+                            relay_check.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+
+                        let item_count = request.items.len();
+                        let ack =
+                            handle_push_request(&storage, &request, &groups_snap, relay_accepts_ref);
+
+                        if ack.rejected > 0 {
+                            tracing::warn!(
+                                items = item_count,
+                                stored = ack.stored,
+                                rejected = ack.rejected,
+                                sender = %peer,
+                                "net: push received (with rejections)"
+                            );
+                        } else if ack.stored > 0 {
+                            tracing::info!(
+                                items = item_count,
+                                stored = ack.stored,
+                                sender = %peer,
+                                "net: push received"
+                            );
+                        }
+                        let _ = swarm
+                            .behaviour_mut()
+                            .memory_push
+                            .send_response(channel, ack.clone());
+
+                        // Relay re-push: forward to all connected peers (excluding sender).
+                        // Loop prevention: duplicate items -> stored == 0 -> no re-push.
+                        if relay_posture.is_some() && ack.stored > 0 {
+                            let all_peers = pool.active_peers().await;
+                            let forward_peers: Vec<_> = all_peers
+                                .into_iter()
+                                .filter(|h| h.node_id != peer)
+                                .collect();
+                            if !forward_peers.is_empty() {
+                                tracing::debug!(
+                                    forward_to = forward_peers.len(),
+                                    stored = ack.stored,
+                                    "relay: re-pushing to connected peers"
+                                );
+                                for relay_peer in &forward_peers {
+                                    swarm.behaviour_mut().memory_push.send_request(
+                                        &relay_peer.node_id,
+                                        MemoryPushRequest {
+                                            items: request.items.clone(),
+                                        },
+                                    );
+                                }
+                            }
+                        }
                     }
                     SwarmEvent::Behaviour(ev) => {
                         let groups_snap = shared_groups.read().await.clone();
@@ -542,33 +642,16 @@ fn handle_behaviour_event(
         }
 
         // -- Memory Push --
+        // Handled in run_swarm_loop (needs async pool access for relay re-push)
         CordeliaBehaviourEvent::MemoryPush(request_response::Event::Message {
             message:
-                request_response::Message::Request {
-                    request, channel, ..
-                },
+                request_response::Message::Request { .. },
             ..
         }) => {
-            let item_count = request.items.len();
-            let ack = handle_push_request(storage, &request, our_groups);
-            if ack.rejected > 0 {
-                tracing::warn!(
-                    items = item_count,
-                    stored = ack.stored,
-                    rejected = ack.rejected,
-                    "net: push received (with rejections)"
-                );
-            } else if ack.stored > 0 {
-                tracing::info!(
-                    items = item_count,
-                    stored = ack.stored,
-                    "net: push received"
-                );
-            }
-            let _ = swarm
-                .behaviour_mut()
-                .memory_push
-                .send_response(channel, ack);
+            // This arm should not fire -- push requests are handled in the
+            // run_swarm_loop main select via the moved-up pattern. If we get
+            // here, it means the pattern didn't match (shouldn't happen).
+            tracing::warn!("net: unexpected push request in behaviour handler");
         }
         CordeliaBehaviourEvent::MemoryPush(request_response::Event::Message {
             message: request_response::Message::Response { response, .. },
@@ -712,6 +795,7 @@ fn handle_push_request(
     storage: &Arc<dyn Storage>,
     req: &MemoryPushRequest,
     our_groups: &[String],
+    relay_accepts: Option<&dyn Fn(&str) -> bool>,
 ) -> PushAck {
     let engine = ReplicationEngine::new(
         cordelia_replication::ReplicationConfig::default(),
@@ -722,7 +806,7 @@ fn handle_push_request(
     let mut rejected = 0u32;
 
     for item in &req.items {
-        match engine.on_receive(storage.as_ref(), item, our_groups) {
+        match engine.on_receive(storage.as_ref(), item, our_groups, relay_accepts) {
             ReceiveOutcome::Stored => {
                 stored += 1;
                 tracing::debug!(

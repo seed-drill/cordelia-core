@@ -141,6 +141,53 @@ impl PeerPool {
             .collect()
     }
 
+    /// Get all active peers (Hot or Warm) that share a given group OR are relays.
+    /// Used by push dispatch: relays forward items even without group membership.
+    pub async fn active_peers_for_group_or_relays(&self, group_id: &str) -> Vec<PeerHandle> {
+        self.inner
+            .read()
+            .await
+            .values()
+            .filter(|h| {
+                h.state.is_active()
+                    && (h.is_relay || h.group_intersection.contains(&group_id.to_string()))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Get a random hot peer for a group, including relays.
+    /// Used by anti-entropy sync on relays where group membership is irrelevant.
+    /// Falls back to warm peers if no hot peers available.
+    pub async fn random_hot_peer_for_group_or_relays(
+        &self,
+        group_id: &str,
+    ) -> Option<PeerHandle> {
+        let pool = self.inner.read().await;
+        let mut peers: Vec<&PeerHandle> = pool
+            .values()
+            .filter(|h| {
+                h.state == PeerState::Hot
+                    && (h.is_relay || h.group_intersection.contains(&group_id.to_string()))
+            })
+            .collect();
+        if peers.is_empty() {
+            peers = pool
+                .values()
+                .filter(|h| {
+                    h.state.is_active()
+                        && (h.is_relay || h.group_intersection.contains(&group_id.to_string()))
+                })
+                .collect();
+        }
+        if peers.is_empty() {
+            return None;
+        }
+        use rand::Rng;
+        let idx = rand::thread_rng().gen_range(0..peers.len());
+        Some(peers[idx].clone())
+    }
+
     /// Get only relay peers (for gossip: only share relays in peer-share responses).
     pub async fn relay_peers(&self) -> Vec<PeerHandle> {
         self.inner

@@ -8,7 +8,7 @@
 //!
 //! Also handles SwarmEvent2 events: connect/disconnect/ping/identify.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cordelia_governor::Governor;
@@ -21,6 +21,10 @@ use crate::swarm_task::{SwarmCommand, SwarmEvent2};
 
 #[allow(clippy::too_many_arguments)]
 /// Run the governor loop until shutdown.
+///
+/// `relay_learned_groups`: if Some, this node is a dynamic relay and groups
+/// discovered from non-relay peers via GroupExchange are collected here.
+/// The replication/swarm tasks use this to decide which groups to forward.
 pub async fn run_governor_loop(
     governor: Arc<Mutex<Governor>>,
     pool: PeerPool,
@@ -28,6 +32,7 @@ pub async fn run_governor_loop(
     mut event_rx: broadcast::Receiver<SwarmEvent2>,
     bootnodes: Vec<BootnodeEntry>,
     shared_groups: Arc<RwLock<Vec<String>>>,
+    relay_learned_groups: Option<Arc<RwLock<HashSet<String>>>>,
     our_peer_id: PeerId,
     mut shutdown: broadcast::Receiver<()>,
 ) {
@@ -164,6 +169,7 @@ pub async fn run_governor_loop(
                         let cmd_tx = cmd_tx.clone();
                         let pool = pool.clone();
                         let groups = groups.clone();
+                        let relay_learned = relay_learned_groups.clone();
                         tokio::spawn(async move {
                             let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                             let _ = cmd_tx.send(SwarmCommand::SendGroupExchange {
@@ -177,7 +183,7 @@ pub async fn run_governor_loop(
                             match resp_rx.await {
                                 Ok(Ok(resp)) => {
                                     let old_intersection = peer.group_intersection.clone();
-                                    pool.update_peer_groups(&peer.node_id, resp.groups).await;
+                                    pool.update_peer_groups(&peer.node_id, resp.groups.clone()).await;
                                     let new_handle = pool.get(&peer.node_id).await;
                                     if let Some(h) = new_handle {
                                         if h.group_intersection != old_intersection {
@@ -187,6 +193,15 @@ pub async fn run_governor_loop(
                                                 new = ?h.group_intersection,
                                                 "group intersection updated"
                                             );
+                                        }
+                                    }
+                                    // Dynamic relay: learn groups from non-relay peers
+                                    if let Some(learned) = relay_learned {
+                                        if !peer.is_relay {
+                                            let mut set = learned.write().await;
+                                            for g in &resp.groups {
+                                                set.insert(g.clone());
+                                            }
                                         }
                                     }
                                 }
@@ -274,6 +289,8 @@ pub async fn run_governor_loop(
                         let pool = pool.clone();
                         let governor = governor.clone();
                         let groups = shared_groups.read().await.clone();
+                        let relay_learned = relay_learned_groups.clone();
+                        let peer_is_relay = is_relay;
                         tokio::spawn(async move {
                             let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                             if let Err(e) = cmd_tx.send(SwarmCommand::SendGroupExchange {
@@ -298,7 +315,16 @@ pub async fn run_governor_loop(
                                     let addrs = pool.get(&peer_id).await
                                         .map(|h| h.addrs.clone())
                                         .unwrap_or_default();
-                                    governor.lock().await.add_peer(peer_id, addrs, resp.groups);
+                                    governor.lock().await.add_peer(peer_id, addrs, resp.groups.clone());
+                                    // Dynamic relay: learn groups from non-relay peers
+                                    if let Some(learned) = relay_learned {
+                                        if !peer_is_relay {
+                                            let mut set = learned.write().await;
+                                            for g in &resp.groups {
+                                                set.insert(g.clone());
+                                            }
+                                        }
+                                    }
                                 }
                                 Ok(Err(e)) => {
                                     tracing::debug!(%peer_id, "gov: initial group exchange failed: {e}");

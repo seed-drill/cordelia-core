@@ -96,11 +96,16 @@ impl ReplicationEngine {
     }
 
     /// Process a received item from a remote peer.
+    ///
+    /// `relay_accepts`: if Some, this node is a relay and the predicate determines
+    /// whether the relay accepts items for a given group_id. If None, normal
+    /// group membership check applies (non-relay behaviour).
     pub fn on_receive(
         &self,
         storage: &dyn Storage,
         item: &FetchedItem,
         our_groups: &[String],
+        relay_accepts: Option<&dyn Fn(&str) -> bool>,
     ) -> ReceiveOutcome {
         // 1. Validate item size (backpressure: reject oversized blobs at P2P boundary)
         if item.encrypted_blob.len() > cordelia_protocol::MAX_ITEM_BYTES {
@@ -111,8 +116,16 @@ impl ReplicationEngine {
             ));
         }
 
-        // 2. Validate group membership
-        if !our_groups.contains(&item.group_id) {
+        // 2. Validate group membership (or relay acceptance)
+        let accepted = if let Some(relay_check) = relay_accepts {
+            // Relay: use posture-based acceptance predicate
+            relay_check(&item.group_id)
+        } else {
+            // Non-relay: must be a member of the group
+            our_groups.contains(&item.group_id)
+        };
+
+        if !accepted {
             return ReceiveOutcome::Rejected(format!(
                 "Outside Context Problem: not a member of group '{}'",
                 item.group_id
@@ -350,7 +363,7 @@ mod tests {
             updated_at: "2026-02-01T00:00:00Z".into(),
         };
 
-        let result = engine.on_receive(&db, &item, &["seed-drill".into()]);
+        let result = engine.on_receive(&db, &item, &["seed-drill".into()], None);
         match result {
             ReceiveOutcome::Rejected(reason) => {
                 assert!(
@@ -383,7 +396,7 @@ mod tests {
             updated_at: "2026-02-01T00:00:00Z".into(),
         };
 
-        let result = engine.on_receive(&db, &item, &["seed-drill".into()]);
+        let result = engine.on_receive(&db, &item, &["seed-drill".into()], None);
         assert_eq!(result, ReceiveOutcome::Stored);
     }
 
@@ -406,7 +419,7 @@ mod tests {
             updated_at: "2026-01-29T00:00:00Z".into(),
         };
 
-        let result = engine.on_receive(&db, &item, &["seed-drill".into()]);
+        let result = engine.on_receive(&db, &item, &["seed-drill".into()], None);
         assert!(matches!(result, ReceiveOutcome::Rejected(_)));
     }
 
@@ -430,11 +443,76 @@ mod tests {
             updated_at: "2026-01-29T00:00:00Z".into(),
         };
 
-        let result = engine.on_receive(&db, &item, &["seed-drill".into()]);
+        let result = engine.on_receive(&db, &item, &["seed-drill".into()], None);
         assert_eq!(result, ReceiveOutcome::Stored);
 
         // Second receive of same item should be duplicate
-        let result2 = engine.on_receive(&db, &item, &["seed-drill".into()]);
+        let result2 = engine.on_receive(&db, &item, &["seed-drill".into()], None);
         assert_eq!(result2, ReceiveOutcome::Duplicate);
+    }
+
+    #[test]
+    fn test_on_receive_relay_accepts_any_group() {
+        let engine = default_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let db = cordelia_storage::SqliteStorage::create_new(&dir.path().join("test.db")).unwrap();
+
+        let data = b"relay-blob";
+        let item = FetchedItem {
+            item_id: "relay-1".into(),
+            item_type: "entity".into(),
+            encrypted_blob: data.to_vec(),
+            checksum: checksum(data),
+            author_id: "alpha-agent".into(),
+            group_id: "alpha-internal".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-01T00:00:00Z".into(),
+        };
+
+        // Non-relay: rejected (not a member)
+        let result = engine.on_receive(&db, &item, &[], None);
+        assert!(matches!(result, ReceiveOutcome::Rejected(_)));
+
+        // Transparent relay: accepts anything
+        let transparent = |_: &str| true;
+        let result = engine.on_receive(&db, &item, &[], Some(&transparent));
+        assert_eq!(result, ReceiveOutcome::Stored);
+    }
+
+    #[test]
+    fn test_on_receive_relay_rejects_unknown_group() {
+        let engine = default_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let db = cordelia_storage::SqliteStorage::create_new(&dir.path().join("test.db")).unwrap();
+
+        let data = b"edge-blob";
+        let item = FetchedItem {
+            item_id: "edge-1".into(),
+            item_type: "entity".into(),
+            encrypted_blob: data.to_vec(),
+            checksum: checksum(data),
+            author_id: "alpha-agent".into(),
+            group_id: "alpha-internal".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-01T00:00:00Z".into(),
+        };
+
+        // Dynamic edge relay that only knows about "shared-xorg"
+        let dynamic = |group_id: &str| group_id == "shared-xorg";
+        let result = engine.on_receive(&db, &item, &[], Some(&dynamic));
+        assert!(matches!(result, ReceiveOutcome::Rejected(_)));
+
+        // Same relay accepts "shared-xorg"
+        let xorg_item = FetchedItem {
+            item_id: "edge-2".into(),
+            group_id: "shared-xorg".into(),
+            ..item
+        };
+        let result = engine.on_receive(&db, &xorg_item, &[], Some(&dynamic));
+        assert_eq!(result, ReceiveOutcome::Stored);
     }
 }
