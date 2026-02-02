@@ -478,13 +478,9 @@ fn parse_bootnode_multiaddr(boot: &BootnodeEntry) -> Option<Multiaddr> {
         .ok()
         .or_else(|| boot.addr.to_socket_addrs().ok().and_then(|mut a| a.next()))?;
 
-    let multiaddr: Multiaddr = format!(
-        "/ip4/{}/tcp/{}",
-        socket_addr.ip(),
-        socket_addr.port()
-    )
-    .parse()
-    .ok()?;
+    let multiaddr: Multiaddr = format!("/ip4/{}/tcp/{}", socket_addr.ip(), socket_addr.port())
+        .parse()
+        .ok()?;
 
     Some(multiaddr)
 }
@@ -519,10 +515,7 @@ fn seed_bootnode(gov: &mut Governor, bootnode_addr: &str, addr: Multiaddr) {
 ///      it's a LAN peer and those addresses are how we reach it.
 fn filter_identify_addrs(addrs: Vec<Multiaddr>) -> Vec<Multiaddr> {
     // Remove loopback first
-    let non_loopback: Vec<Multiaddr> = addrs
-        .into_iter()
-        .filter(|a| !is_loopback_addr(a))
-        .collect();
+    let non_loopback: Vec<Multiaddr> = addrs.into_iter().filter(|a| !is_loopback_addr(a)).collect();
 
     // Check if any address is public (non-RFC1918)
     let has_public = non_loopback.iter().any(|a| is_public_addr(a));
@@ -540,9 +533,8 @@ fn filter_identify_addrs(addrs: Vec<Multiaddr>) -> Vec<Multiaddr> {
 }
 
 fn is_loopback_addr(addr: &Multiaddr) -> bool {
-    addr.iter().any(|proto| {
-        matches!(proto, libp2p::multiaddr::Protocol::Ip4(ip) if ip.is_loopback())
-    })
+    addr.iter()
+        .any(|proto| matches!(proto, libp2p::multiaddr::Protocol::Ip4(ip) if ip.is_loopback()))
 }
 
 /// True if the address contains no RFC1918 IPv4 components.

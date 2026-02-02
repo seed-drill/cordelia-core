@@ -70,9 +70,7 @@ pub async fn run_replication_loop(
     loop {
         // Update gauge-style stats each iteration
         let buf_depth: u64 = write_buffer.values().map(|v| v.len() as u64).sum();
-        stats
-            .write_buffer_depth
-            .store(buf_depth, Ordering::Relaxed);
+        stats.write_buffer_depth.store(buf_depth, Ordering::Relaxed);
         stats
             .pending_push_count
             .store(pending_pushes.len() as u64, Ordering::Relaxed);
@@ -501,11 +499,7 @@ async fn run_anti_entropy(
             match &outcome {
                 ReceiveOutcome::Stored => {
                     stored += 1;
-                    tracing::debug!(
-                        item_id = &item.item_id,
-                        group = group_id,
-                        "repl: stored"
-                    );
+                    tracing::debug!(item_id = &item.item_id, group = group_id, "repl: stored");
                 }
                 ReceiveOutcome::Duplicate => {
                     duplicate += 1;
@@ -525,7 +519,9 @@ async fn run_anti_entropy(
 
     stats.items_synced.fetch_add(stored, Ordering::Relaxed);
     stats.items_rejected.fetch_add(rejected, Ordering::Relaxed);
-    stats.items_duplicate.fetch_add(duplicate, Ordering::Relaxed);
+    stats
+        .items_duplicate
+        .fetch_add(duplicate, Ordering::Relaxed);
 
     tracing::info!(
         group = group_id,
@@ -544,7 +540,10 @@ fn load_group_culture(storage: &Arc<dyn Storage>, group_id: &str) -> Option<Grou
     let group = match storage.read_group(group_id) {
         Ok(Some(g)) => g,
         Ok(None) => {
-            tracing::warn!(group = group_id, "repl: group not found in storage, defaulting to moderate");
+            tracing::warn!(
+                group = group_id,
+                "repl: group not found in storage, defaulting to moderate"
+            );
             return None;
         }
         Err(e) => {

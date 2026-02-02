@@ -583,7 +583,10 @@ fn handle_behaviour_event(
 
         // -- Group Exchange --
         CordeliaBehaviourEvent::GroupExchange(request_response::Event::Message {
-            message: request_response::Message::Request { channel, request, .. },
+            message:
+                request_response::Message::Request {
+                    channel, request, ..
+                },
             peer,
             ..
         }) => {

@@ -321,7 +321,17 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let pool = pool.clone();
         let shutdown = shutdown_tx.subscribe();
         tokio::spawn(async move {
-            swarm_task::run_swarm_loop(swarm, cmd_rx, event_tx, storage, shared_groups, pool, our_role, shutdown).await;
+            swarm_task::run_swarm_loop(
+                swarm,
+                cmd_rx,
+                event_tx,
+                storage,
+                shared_groups,
+                pool,
+                our_role,
+                shutdown,
+            )
+            .await;
         })
     };
 
@@ -336,7 +346,13 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let shutdown = shutdown_tx.subscribe();
         tokio::spawn(async move {
             governor_task::run_governor_loop(
-                governor, pool, cmd_tx, event_rx, bootnodes, shared_groups, shutdown,
+                governor,
+                pool,
+                cmd_tx,
+                event_rx,
+                bootnodes,
+                shared_groups,
+                shutdown,
             )
             .await;
         })
@@ -466,12 +482,8 @@ fn parse_listen_addr(addr: &str) -> anyhow::Result<libp2p::Multiaddr> {
 
     // Fall back to host:port -> /ip4/HOST/tcp/PORT
     let socket_addr: std::net::SocketAddr = addr.parse()?;
-    let multiaddr: libp2p::Multiaddr = format!(
-        "/ip4/{}/tcp/{}",
-        socket_addr.ip(),
-        socket_addr.port()
-    )
-    .parse()?;
+    let multiaddr: libp2p::Multiaddr =
+        format!("/ip4/{}/tcp/{}", socket_addr.ip(), socket_addr.port()).parse()?;
     Ok(multiaddr)
 }
 
@@ -674,10 +686,30 @@ mod tests {
         let pool_a = peer_pool::PeerPool::new(shared_groups.clone());
         let pool_b = peer_pool::PeerPool::new(shared_groups.clone());
         let _swarm_a_handle = tokio::spawn(async move {
-            swarm_task::run_swarm_loop(swarm_a, cmd_rx_a, eta, sa, ga, pool_a, config::NodeRole::Personal, shut_a).await;
+            swarm_task::run_swarm_loop(
+                swarm_a,
+                cmd_rx_a,
+                eta,
+                sa,
+                ga,
+                pool_a,
+                config::NodeRole::Personal,
+                shut_a,
+            )
+            .await;
         });
         let _swarm_b_handle = tokio::spawn(async move {
-            swarm_task::run_swarm_loop(swarm_b, cmd_rx_b, etb, sb, gb, pool_b, config::NodeRole::Personal, shut_b).await;
+            swarm_task::run_swarm_loop(
+                swarm_b,
+                cmd_rx_b,
+                etb,
+                sb,
+                gb,
+                pool_b,
+                config::NodeRole::Personal,
+                shut_b,
+            )
+            .await;
         });
 
         // Wait for swarms to start listening

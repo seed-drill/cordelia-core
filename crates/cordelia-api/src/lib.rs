@@ -862,10 +862,7 @@ async fn peers(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl I
     .into_response()
 }
 
-async fn diagnostics(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn diagnostics(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     if let Err(e) = check_auth(&state, &headers) {
         return e.into_response();
     }
@@ -901,14 +898,18 @@ async fn diagnostics(
 
     let mempool = match state.storage.storage_stats() {
         Ok(stats) => {
-            let group_details: Vec<serde_json::Value> = stats.groups.iter().map(|g| {
-                serde_json::json!({
-                    "group_id": g.group_id,
-                    "items": g.item_count,
-                    "data_bytes": g.data_bytes,
-                    "members": g.member_count,
+            let group_details: Vec<serde_json::Value> = stats
+                .groups
+                .iter()
+                .map(|g| {
+                    serde_json::json!({
+                        "group_id": g.group_id,
+                        "items": g.item_count,
+                        "data_bytes": g.data_bytes,
+                        "members": g.member_count,
+                    })
                 })
-            }).collect();
+                .collect();
             serde_json::json!({
                 "l2_items": stats.l2_item_count,
                 "l2_data_bytes": stats.l2_data_bytes,

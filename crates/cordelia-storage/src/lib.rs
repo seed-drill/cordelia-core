@@ -644,11 +644,8 @@ impl Storage for SqliteStorage {
     fn storage_stats(&self) -> Result<StorageStats> {
         let conn = self.db()?;
 
-        let l2_item_count: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM l2_items",
-            [],
-            |row| row.get(0),
-        )?;
+        let l2_item_count: u64 =
+            conn.query_row("SELECT COUNT(*) FROM l2_items", [], |row| row.get(0))?;
 
         let l2_data_bytes: u64 = conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM l2_items",
@@ -656,11 +653,8 @@ impl Storage for SqliteStorage {
             |row| row.get(0),
         )?;
 
-        let group_count: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM groups",
-            [],
-            |row| row.get(0),
-        )?;
+        let group_count: u64 =
+            conn.query_row("SELECT COUNT(*) FROM groups", [], |row| row.get(0))?;
 
         let mut stmt = conn.prepare(
             "SELECT g.id,

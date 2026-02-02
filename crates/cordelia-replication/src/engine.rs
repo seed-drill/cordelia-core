@@ -206,7 +206,16 @@ mod tests {
             ..Default::default()
         };
 
-        let action = engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1, None, false);
+        let action = engine.on_local_write(
+            "seed-drill",
+            &culture,
+            "item-1",
+            "entity",
+            b"blob",
+            1,
+            None,
+            false,
+        );
 
         match action {
             OutboundAction::BroadcastItem { group_id, item } => {
@@ -223,7 +232,16 @@ mod tests {
         let engine = default_engine();
         let culture = GroupCulture::default();
 
-        let action = engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1, None, false);
+        let action = engine.on_local_write(
+            "seed-drill",
+            &culture,
+            "item-1",
+            "entity",
+            b"blob",
+            1,
+            None,
+            false,
+        );
 
         match action {
             OutboundAction::BroadcastHeader { group_id, header } => {
@@ -243,8 +261,16 @@ mod tests {
         };
 
         let oversized = vec![0u8; cordelia_protocol::MAX_ITEM_BYTES + 1];
-        let action =
-            engine.on_local_write("seed-drill", &culture, "big-item", "entity", &oversized, 1, None, false);
+        let action = engine.on_local_write(
+            "seed-drill",
+            &culture,
+            "big-item",
+            "entity",
+            &oversized,
+            1,
+            None,
+            false,
+        );
 
         assert!(
             matches!(action, OutboundAction::None),
@@ -260,7 +286,16 @@ mod tests {
             ..Default::default()
         };
 
-        let action = engine.on_local_write("seed-drill", &culture, "item-1", "entity", b"blob", 1, None, false);
+        let action = engine.on_local_write(
+            "seed-drill",
+            &culture,
+            "item-1",
+            "entity",
+            b"blob",
+            1,
+            None,
+            false,
+        );
 
         assert!(matches!(action, OutboundAction::None));
     }
@@ -274,8 +309,14 @@ mod tests {
         };
 
         let action = engine.on_local_write(
-            "seed-drill", &culture, "copy-1", "entity", b"blob", 1,
-            Some("parent-abc".into()), true,
+            "seed-drill",
+            &culture,
+            "copy-1",
+            "entity",
+            b"blob",
+            1,
+            Some("parent-abc".into()),
+            true,
         );
 
         match action {

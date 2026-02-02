@@ -407,7 +407,12 @@ impl Governor {
     fn unban_expired(&mut self, actions: &mut GovernorActions) {
         let now = Instant::now();
         for peer in self.peers.values_mut() {
-            if let PeerState::Banned { until, reason, escalation } = &peer.state {
+            if let PeerState::Banned {
+                until,
+                reason,
+                escalation,
+            } = &peer.state
+            {
                 if now >= *until {
                     tracing::info!(
                         peer = %peer.node_id,
@@ -670,12 +675,7 @@ impl Governor {
             return;
         }
 
-        tracing::info!(
-            warm,
-            cold,
-            churn_count,
-            "gov: periodic churn cycle"
-        );
+        tracing::info!(warm, cold, churn_count, "gov: periodic churn cycle");
 
         // Demote random warm → cold
         let warm_ids: Vec<NodeId> = self
