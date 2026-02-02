@@ -32,48 +32,94 @@ jobs:
         run: cargo test --workspace
 
   build:
-    name: Build Linux Binary
+    name: Build ${{ matrix.target }}
     needs: test
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            cross: false
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            cross: false
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+        if: ${{ !matrix.cross }}
+        with:
+          targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
-      - name: Build release binary
-        run: cargo build --release --bin cordelia-node
+      - name: Install cross
+        if: ${{ matrix.cross }}
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Strip binary
-        run: strip target/release/cordelia-node
+      - name: Build release binary (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --bin cordelia-node --target ${{ matrix.target }}
+
+      - name: Build release binary (cross)
+        if: ${{ matrix.cross }}
+        run: cross build --release --bin cordelia-node --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux)
+        if: contains(matrix.target, 'linux') && !matrix.cross
+        run: strip target/${{ matrix.target }}/release/cordelia-node
+
+      - name: Strip binary (Linux cross)
+        if: contains(matrix.target, 'linux') && matrix.cross
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-strip target/${{ matrix.target }}/release/cordelia-node
+
+      - name: Strip binary (macOS)
+        if: contains(matrix.target, 'apple')
+        run: strip target/${{ matrix.target }}/release/cordelia-node
 
       - name: Rename binary
-        run: cp target/release/cordelia-node cordelia-node-x86_64-linux
+        run: cp target/${{ matrix.target }}/release/cordelia-node cordelia-node-${{ matrix.target }}
 
-      - name: Generate checksum
-        run: sha256sum cordelia-node-x86_64-linux > sha256sums.txt
+      - name: Generate checksum (Linux)
+        if: contains(matrix.target, 'linux')
+        run: sha256sum cordelia-node-${{ matrix.target }} > cordelia-node-${{ matrix.target }}.sha256
+
+      - name: Generate checksum (macOS)
+        if: contains(matrix.target, 'apple')
+        run: shasum -a 256 cordelia-node-${{ matrix.target }} > cordelia-node-${{ matrix.target }}.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-binaries
+          name: cordelia-node-${{ matrix.target }}
           path: |
-            cordelia-node-x86_64-linux
-            sha256sums.txt
+            cordelia-node-${{ matrix.target }}
+            cordelia-node-${{ matrix.target }}.sha256
 
   release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-binaries
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            cordelia-node-x86_64-linux
-            sha256sums.txt
+            cordelia-node-*
           generate_release_notes: true
