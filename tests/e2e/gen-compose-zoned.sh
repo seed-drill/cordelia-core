@@ -436,6 +436,7 @@ addr = \"edge-seeddrill-2:9474\""
     environment:
       - CORDELIA_STORAGE=sqlite
       - CORDELIA_NODE_URL=http://keeper-seeddrill-1:9473
+      - CORDELIA_CORE_API=http://keeper-seeddrill-1:9473
       - CORDELIA_NODE_TOKEN=${BEARER_TOKEN}
       - CORDELIA_LOCAL_USERS=admin:admin
       - CORDELIA_HTTP_PORT=3847
