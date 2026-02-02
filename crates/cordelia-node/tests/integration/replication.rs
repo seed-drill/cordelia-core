@@ -12,7 +12,7 @@ use crate::harness::{build_test_runtime, scaled_timeout, test_node_count, TestMe
 /// Node count from TEST_NODE_COUNT (default 2). Worker threads from TEST_WORKER_THREADS (default 4).
 #[test]
 fn test_item_replication_chatty() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(2);
         let groups = vec!["chatty-group".into()];
         let timeout = scaled_timeout(n, 90);
@@ -392,7 +392,7 @@ async fn test_blocked_groups() {
 /// Node count from TEST_NODE_COUNT (default 5). Worker threads from TEST_WORKER_THREADS (default 4).
 #[test]
 fn test_replication_propagation_timing() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(5);
         let timeout = scaled_timeout(n, 90);
         let mesh = TestMesh::new(n, vec!["chatty-group".into()]).await.unwrap();
@@ -483,7 +483,7 @@ fn test_replication_propagation_timing() {
 /// Node count from TEST_NODE_COUNT (default 6). Worker threads from TEST_WORKER_THREADS (default 4).
 #[test]
 fn test_group_isolation_at_scale() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(6);
         assert!(n >= 6, "group isolation test needs at least 6 nodes");
         let timeout = scaled_timeout(n, 90);
@@ -563,7 +563,7 @@ fn test_group_isolation_at_scale() {
 /// Node count from TEST_NODE_COUNT (default 5). Worker threads from TEST_WORKER_THREADS (default 4).
 #[test]
 fn test_concurrent_write_convergence() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(5);
         let timeout = scaled_timeout(n, 90);
         let mesh = TestMesh::new(n, vec!["chatty-group".into()]).await.unwrap();

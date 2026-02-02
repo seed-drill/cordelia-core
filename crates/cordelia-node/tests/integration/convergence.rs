@@ -19,7 +19,7 @@ async fn test_two_node_convergence() {
 /// Worker threads from TEST_WORKER_THREADS (default 4).
 #[test]
 fn test_n_node_convergence() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(3);
         let timeout = scaled_timeout(n, 90);
         let mesh = TestMesh::new(n, vec!["g1".into()]).await.unwrap();
@@ -78,7 +78,7 @@ async fn test_staggered_startup() {
 /// Base mesh size from TEST_NODE_COUNT (default 2).
 #[test]
 fn test_late_joiner() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(2);
         let total = n + 1;
         let timeout = scaled_timeout(total, 90);
@@ -125,7 +125,7 @@ fn test_late_joiner() {
 /// Node count from TEST_NODE_COUNT (default 3).
 #[test]
 fn test_rolling_restart() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(3);
         let timeout = scaled_timeout(n, 90);
         let groups = vec!["g1".into()];
@@ -178,7 +178,7 @@ fn test_rolling_restart() {
 /// Simulates the boot4 pattern: connection drops without node restart.
 #[test]
 fn test_peer_disconnect_recovery() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(3);
         assert!(n >= 2, "disconnect recovery requires at least 2 nodes");
         let timeout = scaled_timeout(n, 90);
@@ -204,7 +204,7 @@ fn test_peer_disconnect_recovery() {
 /// connects inbound before first governor tick, causing connection accumulation.
 #[test]
 fn test_connection_stability() {
-    build_test_runtime(4).block_on(async {
+    build_test_runtime(10).block_on(async {
         let n = test_node_count(3);
         let timeout = scaled_timeout(n, 90);
         let mesh = TestMesh::new(n, vec!["g1".into()]).await.unwrap();
