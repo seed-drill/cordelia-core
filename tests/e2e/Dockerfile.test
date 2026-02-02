@@ -6,7 +6,8 @@ FROM rust:latest AS builder
 WORKDIR /build
 COPY . .
 
-RUN cargo build --release --bin cordelia-node
+# Force full recompilation -- no stale cargo cache artifacts
+RUN cargo clean && cargo build --release --bin cordelia-node
 
 # Runtime stage
 FROM debian:bookworm-slim
