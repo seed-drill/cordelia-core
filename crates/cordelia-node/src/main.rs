@@ -203,7 +203,8 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
             .unwrap_or(None)
             .is_some();
         if !exists {
-            if let Err(e) = storage.write_group(group_id, group_id, "{}", "{}") {
+            let default_culture = r#"{"broadcast_eagerness":"chatty"}"#;
+            if let Err(e) = storage.write_group(group_id, group_id, default_culture, "{}") {
                 tracing::warn!(group = group_id, error = %e, "failed to seed group from config");
             } else {
                 tracing::info!(group = group_id, "seeded group from config");
