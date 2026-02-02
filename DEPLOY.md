@@ -113,8 +113,8 @@ All DNS managed in Cloudflare.
 
 | Record | Type | Value |
 |--------|------|-------|
-| boot1.cordelia.seeddrill.io | CNAME | cordelia-boot1.fly.dev |
-| boot2.cordelia.seeddrill.io | CNAME | cordelia-boot2.fly.dev |
+| boot1.cordelia.seeddrill.ai | CNAME | cordelia-boot1.fly.dev |
+| boot2.cordelia.seeddrill.ai | CNAME | cordelia-boot2.fly.dev |
 
 ## Node Configuration
 
@@ -133,7 +133,7 @@ Both boot nodes use a single parameterised `Dockerfile` with `BOOT_CONFIG` build
 3. `curl https://cordelia-proxy.fly.dev/api/health` -- ok: true
 4. `curl https://cordelia-proxy.fly.dev/api/core/status` -- connected: true, groups include seeddrill-internal
 5. `curl https://cordelia-proxy.fly.dev/api/docs` -- Swagger UI loads
-6. `dig boot1.cordelia.seeddrill.io` / `dig boot2.cordelia.seeddrill.io` -- resolve to Fly IPs
+6. `dig boot1.cordelia.seeddrill.ai` / `dig boot2.cordelia.seeddrill.ai` -- resolve to Fly IPs
 
 ## Local Development (macOS)
 
@@ -156,10 +156,10 @@ entity_id = "russell"  # Change to your entity ID
 listen_addr = "0.0.0.0:9474"
 
 [[network.bootnodes]]
-addr = "boot1.cordelia.seeddrill.io:9474"
+addr = "boot1.cordelia.seeddrill.ai:9474"
 
 [[network.bootnodes]]
-addr = "boot2.cordelia.seeddrill.io:9474"
+addr = "boot2.cordelia.seeddrill.ai:9474"
 
 [governor]
 hot_min = 2
