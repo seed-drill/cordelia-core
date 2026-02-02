@@ -157,16 +157,28 @@ pub fn load_or_create_token(path: &PathBuf) -> anyhow::Result<String> {
     Ok(token)
 }
 
-/// Parse listen_addr from config (supports both "host:port" and Multiaddr format).
-pub fn parse_listen_addr(addr: &str) -> anyhow::Result<libp2p::Multiaddr> {
+/// Parse listen_addr from config (supports Multiaddr, IP:port, and hostname:port).
+pub async fn parse_listen_addr(addr: &str) -> anyhow::Result<libp2p::Multiaddr> {
     // Try Multiaddr first
     if let Ok(ma) = addr.parse::<libp2p::Multiaddr>() {
         return Ok(ma);
     }
 
-    // Fall back to host:port -> /ip4/HOST/tcp/PORT
-    let socket_addr: std::net::SocketAddr = addr.parse()?;
+    // Try IP:port (no DNS needed)
+    if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
+        let multiaddr: libp2p::Multiaddr =
+            format!("/ip4/{}/tcp/{}", socket_addr.ip(), socket_addr.port()).parse()?;
+        return Ok(multiaddr);
+    }
+
+    // Try hostname:port via async DNS resolution
+    let resolved = tokio::net::lookup_host(addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("DNS resolution failed for '{addr}': {e}"))?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("DNS resolution returned no results for '{addr}'"))?;
+
     let multiaddr: libp2p::Multiaddr =
-        format!("/ip4/{}/tcp/{}", socket_addr.ip(), socket_addr.port()).parse()?;
+        format!("/ip4/{}/tcp/{}", resolved.ip(), resolved.port()).parse()?;
     Ok(multiaddr)
 }

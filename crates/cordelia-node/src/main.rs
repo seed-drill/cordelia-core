@@ -217,13 +217,13 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let repl_stats = Arc::new(cordelia_api::ReplicationStats::new());
 
     // Build libp2p swarm
-    let listen_addr: libp2p::Multiaddr = parse_listen_addr(&cfg.network.listen_addr)?;
+    let listen_addr: libp2p::Multiaddr = parse_listen_addr(&cfg.network.listen_addr).await?;
     let mut swarm = swarm_task::build_swarm(keypair, listen_addr)
         .map_err(|e| anyhow::anyhow!("swarm build failed: {e}"))?;
 
     // Add external address so identify announces our public IP (critical for Docker/NAT)
     if let Some(ext) = &cfg.network.external_addr {
-        let ext_addr: libp2p::Multiaddr = parse_listen_addr(ext)?;
+        let ext_addr: libp2p::Multiaddr = parse_listen_addr(ext).await?;
         swarm.add_external_address(ext_addr.clone());
         tracing::info!(%ext_addr, "added external address");
     }

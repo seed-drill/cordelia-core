@@ -35,14 +35,16 @@ pub async fn run_governor_loop(
         tracing::warn!("no bootnodes configured -- node will only accept inbound connections");
     }
 
-    // Seed bootnodes as cold peers
+    // Seed bootnodes as cold peers (with retry for DNS resolution)
+    let mut unresolved_bootnodes: Vec<BootnodeEntry> = Vec::new();
     {
         let mut gov = governor.lock().await;
         for boot in &bootnodes {
-            if let Some(addr) = parse_bootnode_multiaddr(boot) {
+            if let Some(addr) = parse_bootnode_multiaddr(boot).await {
                 seed_bootnode(&mut gov, &boot.addr, addr);
             } else {
-                tracing::warn!(bootnode = &boot.addr, "failed to parse bootnode address");
+                tracing::info!(bootnode = &boot.addr, "bootnode DNS pending, will retry");
+                unresolved_bootnodes.push(boot.clone());
             }
         }
     }
@@ -134,6 +136,25 @@ pub async fn run_governor_loop(
                 );
 
                 tick_count += 1;
+
+                // Retry unresolved bootnodes (DNS may not have been ready at startup)
+                if !unresolved_bootnodes.is_empty() && tick_count <= 6 {
+                    let mut still_unresolved = Vec::new();
+                    let mut gov = governor.lock().await;
+                    for boot in unresolved_bootnodes.drain(..) {
+                        if let Some(addr) = parse_bootnode_multiaddr(&boot).await {
+                            tracing::info!(bootnode = &boot.addr, "bootnode resolved on retry");
+                            seed_bootnode(&mut gov, &boot.addr, addr);
+                        } else {
+                            still_unresolved.push(boot);
+                        }
+                    }
+                    drop(gov);
+                    unresolved_bootnodes = still_unresolved;
+                    if unresolved_bootnodes.is_empty() {
+                        tracing::info!("all bootnodes resolved");
+                    }
+                }
 
                 // Periodic group exchange with active peers
                 if tick_count.is_multiple_of(group_exchange_every) {
@@ -489,27 +510,34 @@ async fn discover_peers(
 }
 
 /// Parse a bootnode address string into a Multiaddr.
-/// Supports both raw Multiaddr format (/ip4/.../tcp/...) and
-/// legacy host:port format (converted to /ip4/HOST/tcp/PORT).
-fn parse_bootnode_multiaddr(boot: &BootnodeEntry) -> Option<Multiaddr> {
+/// Supports Multiaddr format (/ip4/.../tcp/...), IP:port, and hostname:port
+/// (resolved via async DNS).
+async fn parse_bootnode_multiaddr(boot: &BootnodeEntry) -> Option<Multiaddr> {
     // Try Multiaddr first
     if let Ok(addr) = boot.addr.parse::<Multiaddr>() {
         return Some(addr);
     }
 
-    // Fall back to host:port -> Multiaddr conversion
-    use std::net::ToSocketAddrs;
-    let socket_addr = boot
-        .addr
-        .parse::<std::net::SocketAddr>()
-        .ok()
-        .or_else(|| boot.addr.to_socket_addrs().ok().and_then(|mut a| a.next()))?;
+    // Try IP:port (no DNS needed)
+    if let Ok(socket_addr) = boot.addr.parse::<std::net::SocketAddr>() {
+        return format!("/ip4/{}/tcp/{}", socket_addr.ip(), socket_addr.port())
+            .parse()
+            .ok();
+    }
 
-    let multiaddr: Multiaddr = format!("/ip4/{}/tcp/{}", socket_addr.ip(), socket_addr.port())
-        .parse()
-        .ok()?;
-
-    Some(multiaddr)
+    // Async DNS resolution for hostname:port
+    match tokio::net::lookup_host(&boot.addr).await {
+        Ok(mut addrs) => {
+            let resolved = addrs.next()?;
+            format!("/ip4/{}/tcp/{}", resolved.ip(), resolved.port())
+                .parse()
+                .ok()
+        }
+        Err(e) => {
+            tracing::debug!(addr = &boot.addr, "DNS lookup failed: {e}");
+            None
+        }
+    }
 }
 
 /// Seed a resolved bootnode into the governor as a cold relay peer.
