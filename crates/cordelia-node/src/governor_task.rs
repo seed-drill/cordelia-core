@@ -60,14 +60,15 @@ pub async fn run_governor_loop(
     // Track outbound dials: addr -> placeholder PeerId (for bootnode replacement)
     let mut pending_dials: HashMap<Multiaddr, PeerId> = HashMap::new();
 
-    let tick_interval = cordelia_governor::TICK_INTERVAL;
+    let mut tick_timer = tokio::time::interval(cordelia_governor::TICK_INTERVAL);
+    tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut tick_count: u64 = 0;
     let group_exchange_every = cordelia_protocol::GROUP_EXCHANGE_TICKS;
     let peer_discovery_every = cordelia_protocol::PEER_DISCOVERY_TICKS;
 
     loop {
         tokio::select! {
-            _ = tokio::time::sleep(tick_interval) => {
+            _ = tick_timer.tick() => {
                 // Sync dynamic groups into governor before tick
                 let actions = {
                     let mut gov = governor.lock().await;
