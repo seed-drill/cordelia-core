@@ -144,7 +144,6 @@ role = "${role}"
 
 [network]
 listen_addr = "0.0.0.0:9474"
-external_addr = "${hostname}:9474"
 
 ${bootnodes}
 
