@@ -170,16 +170,17 @@ pub async fn run_governor_loop(
                 // re-dial it. Bootnodes are critical infrastructure -- they
                 // must stay connected. Like a Culture Mind making contact,
                 // we keep trying whether the other end is ready or not.
-                if tick_count > 0 && tick_count.is_multiple_of(6) && !resolved_bootnode_addrs.is_empty() {
-                    let active_addrs: HashSet<Multiaddr> = pool
-                        .active_peers()
-                        .await
-                        .into_iter()
-                        .flat_map(|h| h.addrs)
+                if tick_count > 0 && tick_count % 6 == 0 && !resolved_bootnode_addrs.is_empty() {
+                    let active_peers = pool.active_peers().await;
+                    let active_addrs: HashSet<Multiaddr> = active_peers
+                        .iter()
+                        .flat_map(|h| h.addrs.clone())
                         .collect();
 
+                    let mut missing = 0usize;
                     for (boot, addr) in &resolved_bootnode_addrs {
                         if !active_addrs.contains(addr) {
+                            missing += 1;
                             tracing::warn!(
                                 bootnode = &boot.addr,
                                 %addr,
@@ -195,6 +196,14 @@ pub async fn run_governor_loop(
                                 tracing::warn!(bootnode = &boot.addr, "bootnode re-dial send failed: {e}");
                             }
                         }
+                    }
+                    if missing == 0 {
+                        tracing::warn!(
+                            active_peers = active_peers.len(),
+                            active_addrs = active_addrs.len(),
+                            bootnodes = resolved_bootnode_addrs.len(),
+                            "all bootnodes connected"
+                        );
                     }
                 }
 
