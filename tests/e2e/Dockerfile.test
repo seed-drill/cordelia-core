@@ -1,0 +1,41 @@
+# Test image for cordelia-node e2e tests.
+# Extends production Dockerfile with curl/jq and a fixed bearer token.
+
+FROM rust:latest AS builder
+
+WORKDIR /build
+COPY . .
+
+RUN cargo build --release --bin cordelia-node
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl jq \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash cordelia
+WORKDIR /home/cordelia
+
+COPY --from=builder /build/target/release/cordelia-node /usr/local/bin/cordelia-node
+
+# Pre-seed bearer token so all nodes share the same token for test API access
+ARG BEARER_TOKEN=test-token-fixed
+RUN mkdir -p /home/cordelia/.cordelia && \
+    echo -n "$BEARER_TOKEN" > /home/cordelia/.cordelia/node-token && \
+    chown -R cordelia:cordelia /home/cordelia
+
+USER cordelia
+
+EXPOSE 9474/tcp
+EXPOSE 9473/tcp
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=10 \
+    CMD curl -sf -X POST \
+        -H "Authorization: Bearer ${BEARER_TOKEN:-test-token-fixed}" \
+        -H "Content-Type: application/json" \
+        -d '{}' \
+        http://127.0.0.1:9473/api/v1/status || exit 1
+
+CMD ["sh", "-c", "exec cordelia-node --config /home/cordelia/.cordelia/config.toml"]
