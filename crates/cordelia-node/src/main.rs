@@ -431,6 +431,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let stats = repl_stats.clone();
         let is_relay = our_role == config::NodeRole::Relay;
         let relay_learned = relay_learned_groups.clone();
+        let relay_blocked = relay_blocked.clone();
         tokio::spawn(async move {
             replication_task::run_replication_loop(
                 repl_engine,
@@ -443,6 +444,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 stats,
                 is_relay,
                 relay_learned,
+                relay_blocked,
             )
             .await;
         })

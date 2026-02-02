@@ -33,6 +33,8 @@ struct PendingPush {
 /// `is_relay`: whether this node is a relay (affects peer selection for push/sync).
 /// `relay_learned_groups`: for dynamic relays, the set of groups learned from peers.
 ///   Used to expand anti-entropy group list beyond our own memberships.
+/// `relay_blocked_groups`: deny-list applied on top of any posture.  Groups in this
+///   set are excluded from anti-entropy sync and the relay acceptance predicate.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_replication_loop(
     engine: ReplicationEngine,
@@ -45,6 +47,7 @@ pub async fn run_replication_loop(
     stats: Arc<ReplicationStats>,
     is_relay: bool,
     relay_learned_groups: Option<Arc<RwLock<HashSet<String>>>>,
+    relay_blocked_groups: Arc<HashSet<String>>,
 ) {
     // Base tick for per-culture sync scheduling (fastest culture interval = 60s for chatty)
     let mut sync_base_tick = tokio::time::interval(std::time::Duration::from_secs(
@@ -313,6 +316,11 @@ pub async fn run_replication_loop(
                     }
                 }
 
+                // Filter out blocked groups (relay deny-list applies to all postures)
+                if !relay_blocked_groups.is_empty() {
+                    current_groups.retain(|g| !relay_blocked_groups.contains(g));
+                }
+
                 for group_id in &current_groups {
                     // Check if this group is due for sync
                     let deadline = next_sync_at.get(group_id).copied();
@@ -345,6 +353,7 @@ pub async fn run_replication_loop(
 
                     // Build relay acceptance set for anti-entropy receive.
                     // For relays, accept items from the group universe we're syncing.
+                    // blocked_groups already filtered from current_groups above.
                     let relay_accept_set: Option<HashSet<String>> = if is_relay {
                         Some(current_groups.iter().cloned().collect())
                     } else {

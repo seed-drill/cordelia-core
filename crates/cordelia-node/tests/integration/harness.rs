@@ -517,6 +517,7 @@ impl TestNodeBuilder {
             let shutdown = shutdown_tx.subscribe();
             let stats = repl_stats.clone();
             let relay_learned = relay_learned_groups.clone();
+            let relay_blocked = relay_blocked.clone();
             handles.push(tokio::spawn(async move {
                 replication_task::run_replication_loop(
                     repl_engine,
@@ -529,6 +530,7 @@ impl TestNodeBuilder {
                     stats,
                     is_relay,
                     relay_learned,
+                    relay_blocked,
                 )
                 .await;
             }));
