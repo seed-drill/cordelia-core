@@ -390,6 +390,9 @@ EOF
         org="${ORG_NAMES[$o]}"
         echo "      - org-${org}" >> "$COMPOSE_FILE"
     done
+    if [ "${PROXY_ENABLED}" = "1" ]; then
+        echo "      - org-seeddrill" >> "$COMPOSE_FILE"
+    fi
 }
 
 # Seed Drill org: edge relays + keeper + proxy (mirrors production deployment)
