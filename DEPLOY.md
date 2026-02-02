@@ -14,7 +14,7 @@ All production infrastructure runs on Fly.io. Two relay boot nodes provide mesh 
     boot1 (lhr) -------- boot2 (ams)
     relay/transparent     relay/transparent
             \              /
-          cordelia-proxy (lhr)
+          seeddrill-proxy (lhr)
           embedded node = keeper
           groups: [seeddrill-internal, shared-xorg]
           bootnodes: [boot1, boot2]
@@ -57,7 +57,7 @@ Verify boot1 <-> boot2 peering:
 flyctl logs -a cordelia-boot2 --no-tail | grep -E "(handshake|connected|peer)"
 ```
 
-### 3. Deploy cordelia-proxy (London)
+### 3. Deploy seeddrill-proxy (London)
 
 ```bash
 cd cordelia-proxy
@@ -66,8 +66,8 @@ flyctl deploy --remote-only
 
 Verify:
 ```bash
-curl https://cordelia-proxy.fly.dev/api/health
-curl https://cordelia-proxy.fly.dev/api/core/status
+curl https://seeddrill-proxy.fly.dev/api/health
+curl https://seeddrill-proxy.fly.dev/api/core/status
 ```
 
 Expected: `ok: true`, `connected: true`, peers >= 2.
@@ -105,7 +105,7 @@ exit
 flyctl machines restart -a cordelia-boot1
 ```
 
-Same procedure for boot2 and cordelia-proxy (proxy config at `/data/core/config.toml`).
+Same procedure for boot2 and seeddrill-proxy (proxy config at `/data/core/config.toml`).
 
 ## DNS
 
@@ -120,19 +120,19 @@ All DNS managed in Cloudflare.
 
 Both boot nodes use a single parameterised `Dockerfile` with `BOOT_CONFIG` build arg:
 
-| Node | Config | Region | Role |
-|------|--------|--------|------|
-| boot1 | boot1-config.toml | lhr (London) | relay/transparent |
-| boot2 | boot2-config.toml | ams (Amsterdam) | relay/transparent |
-| proxy | fly-node-config.toml (in cordelia-proxy) | lhr (London) | keeper |
+| Node | Fly App | Config | Region | Role |
+|------|---------|--------|--------|------|
+| boot1 | cordelia-boot1 | boot1-config.toml | lhr (London) | relay/transparent |
+| boot2 | cordelia-boot2 | boot2-config.toml | ams (Amsterdam) | relay/transparent |
+| proxy | seeddrill-proxy | fly-node-config.toml (in cordelia-proxy) | lhr (London) | keeper |
 
 ## Verification Checklist
 
 1. `flyctl logs -a cordelia-boot1` -- peer connections to boot2
 2. `flyctl logs -a cordelia-boot2` -- peer connections to boot1
-3. `curl https://cordelia-proxy.fly.dev/api/health` -- ok: true
-4. `curl https://cordelia-proxy.fly.dev/api/core/status` -- connected: true, groups include seeddrill-internal
-5. `curl https://cordelia-proxy.fly.dev/api/docs` -- Swagger UI loads
+3. `curl https://seeddrill-proxy.fly.dev/api/health` -- ok: true
+4. `curl https://seeddrill-proxy.fly.dev/api/core/status` -- connected: true, groups include seeddrill-internal
+5. `curl https://seeddrill-proxy.fly.dev/api/docs` -- Swagger UI loads
 6. `dig boot1.cordelia.seeddrill.ai` / `dig boot2.cordelia.seeddrill.ai` -- resolve to Fly IPs
 
 ## Local Development (macOS)
