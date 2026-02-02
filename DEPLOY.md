@@ -1,254 +1,143 @@
-# Cordelia Node -- Deployment Guide
+# Cordelia Node -- Deployment Guide (Fly.io)
 
-Step-by-step instructions for deploying a `cordelia-node` instance.
+All production infrastructure runs on Fly.io. Two relay boot nodes provide mesh connectivity; the cordelia-proxy runs an embedded keeper node for persistent storage and the REST API.
+
+## Architecture
+
+```
+                [Cloudflare]
+                CF Pages (seeddrill.ai) -- static site
+                CF Proxy -- DNS/TLS termination
+                    |
+                [Fly.io]
+                    |
+    boot3 (lhr) -------- boot4 (ams)
+    relay/transparent     relay/transparent
+            \              /
+          cordelia-proxy (lhr)
+          embedded node = keeper
+          groups: [seeddrill-internal, shared-xorg]
+          bootnodes: [boot3, boot4]
+          REST API + dashboard on :3847
+```
+
+Monthly cost: ~$8-9 (2x shared-cpu-1x 256MB boots + 1x shared-cpu-1x 512MB proxy)
 
 ## Prerequisites
 
-- Linux host (Debian/Ubuntu tested) with KVM or bare metal
-- Rust toolchain (`rustup`, stable channel)
+- `flyctl` installed: `curl -L https://fly.io/install.sh | sh`
+- Fly.io account authenticated: `flyctl auth login`
 - Git access to `git@github.com:seed-drill/cordelia-core.git`
-- DNS record pointing to the host (e.g. `boot2.cordelia.seeddrill.io`)
-- UDP port 9474 open inbound (QUIC)
+- Git access to `git@github.com:seed-drill/cordelia-proxy.git`
 
-## 1. SSH Access
+## Deploy
 
-Current topology uses a jump host:
+Order matters -- boot nodes must be up before the keeper can connect.
 
-```bash
-# From your machine -> jump host -> target
-ssh rezi@dooku
-ssh cordelia@<target-host>
-```
-
-Note: `-J` (ProxyJump) does not work with the current dooku config. Use two-hop manually.
-
-## 2. Install Rust (if not present)
+### 1. Deploy boot3 (London)
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-rustup default stable
-```
-
-## 3. Clone and Build
-
-```bash
-cd ~
-git clone git@github.com:seed-drill/cordelia-core.git
 cd cordelia-core
-cargo build --release
+flyctl deploy --config fly-boot3.toml --remote-only
 ```
 
-Binary: `target/release/cordelia-node`
+Verify:
+```bash
+flyctl logs -a cordelia-boot3 --no-tail | tail -20
+```
 
-## 4. Node Identity
-
-The node auto-generates an Ed25519 PKCS#8 keypair at `~/.cordelia/node.key` on first run. No manual key generation needed.
+### 2. Deploy boot4 (Amsterdam)
 
 ```bash
-mkdir -p ~/.cordelia
+flyctl deploy --config fly-boot4.toml --remote-only
 ```
 
-## 5. Create Config
+Verify boot3 <-> boot4 peering:
+```bash
+flyctl logs -a cordelia-boot4 --no-tail | grep -E "(handshake|connected|peer)"
+```
+
+### 3. Deploy cordelia-proxy (London)
 
 ```bash
-cat > ~/.cordelia/config.toml << 'EOF'
-[node]
-identity_key = "~/.cordelia/node.key"
-api_transport = "http"
-api_addr = "127.0.0.1:9473"
-database = "~/.cordelia/cordelia.db"
-entity_id = "martin"  # Change to your entity ID
-
-[network]
-listen_addr = "0.0.0.0:9474"
-
-[[network.bootnodes]]
-addr = "boot1.cordelia.seeddrill.io:9474"
-
-[[network.bootnodes]]
-addr = "boot2.cordelia.seeddrill.io:9474"
-
-[governor]
-hot_min = 2
-hot_max = 20
-warm_min = 10
-warm_max = 50
-
-[replication]
-sync_interval_moderate_secs = 300
-tombstone_retention_days = 7
-max_batch_size = 100
-EOF
+cd cordelia-proxy
+flyctl deploy --remote-only
 ```
 
-## 6. Create systemd Service
+Verify:
+```bash
+curl https://cordelia-proxy.fly.dev/api/health
+curl https://cordelia-proxy.fly.dev/api/core/status
+```
+
+Expected: `ok: true`, `connected: true`, peers >= 2.
+
+## Updating an Existing Deployment
+
+### Code changes
+
+Redeploy from the relevant repo:
 
 ```bash
-sudo tee /etc/systemd/system/cordelia-node.service << 'EOF'
-[Unit]
-Description=Cordelia P2P Node
-After=network-online.target
-Wants=network-online.target
+# Boot nodes
+cd cordelia-core
+flyctl deploy --config fly-boot3.toml --remote-only
+flyctl deploy --config fly-boot4.toml --remote-only
 
-[Service]
-Type=simple
-User=cordelia
-Group=cordelia
-ExecStart=/usr/local/bin/cordelia-node --config /home/cordelia/.cordelia/config.toml
-WorkingDirectory=/home/cordelia
-Restart=on-failure
-RestartSec=5
-
-# Security hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/home/cordelia/.cordelia
-PrivateTmp=true
-
-# Environment
-Environment=RUST_LOG=info,cordelia_node=debug
-
-[Install]
-WantedBy=multi-user.target
-EOF
+# Proxy
+cd cordelia-proxy
+flyctl deploy --remote-only
 ```
 
-Grant passwordless service management:
+### Config changes on existing volumes
+
+The config is copied to the Fly volume on first boot only. To update config on a running node:
 
 ```bash
-# Add to /etc/sudoers.d/cordelia
-cordelia ALL=(ALL) NOPASSWD: /usr/bin/systemctl start cordelia-node, \
-    /usr/bin/systemctl stop cordelia-node, \
-    /usr/bin/systemctl restart cordelia-node, \
-    /usr/bin/systemctl status cordelia-node, \
-    /usr/bin/journalctl -u cordelia-node*
+# SSH into the machine
+flyctl ssh console -a cordelia-boot3
+
+# Edit the on-volume config
+vi /home/cordelia/.cordelia/config.toml
+
+# Restart (the process manager will restart the app)
+exit
+flyctl machines restart -a cordelia-boot3
 ```
 
-## 7. Start the Node
+Same procedure for boot4 and cordelia-proxy (proxy config at `/data/core/config.toml`).
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable cordelia-node
-sudo systemctl start cordelia-node
-sudo journalctl -u cordelia-node -f
-```
+## DNS
 
-You should see:
-```
-cordelia-node listening on 0.0.0.0:9474
-API server on 127.0.0.1:9473
-```
+All DNS managed in Cloudflare.
 
-The SQLite database auto-initialises on first run (schema v4).
+| Record | Type | Value |
+|--------|------|-------|
+| boot3.cordelia.seeddrill.io | CNAME | cordelia-boot3.fly.dev |
+| boot4.cordelia.seeddrill.io | CNAME | cordelia-boot4.fly.dev |
 
-## 8. Create Groups
+## Node Configuration
 
-After the node starts, create shared groups via the API. A bearer token is auto-generated at `~/.cordelia/node-token` on first run.
+Both boot nodes use a single parameterised `Dockerfile` with `BOOT_CONFIG` build arg:
 
-```bash
-TOKEN=$(cat ~/.cordelia/node-token)
-curl -s http://127.0.0.1:9473/api/v1/groups/create \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"group_id":"seed-drill","name":"Seed Drill","culture":"moderate","security_policy":"{}"}' | jq .
-```
+| Node | Config | Region | Role |
+|------|--------|--------|------|
+| boot3 | boot3-config.toml | lhr (London) | relay/transparent |
+| boot4 | boot4-config.toml | ams (Amsterdam) | relay/transparent |
+| proxy | fly-node-config.toml (in cordelia-proxy) | lhr (London) | keeper |
 
-Both nodes must have the same group IDs for replication to work.
+## Verification Checklist
 
-## 9. Verify Peer Connection
-
-Check logs for handshake:
-
-```bash
-sudo journalctl -u cordelia-node --since "5 min ago" | grep -E "(handshake|connected|peer)"
-```
-
-Check peer status via API or CLI:
-
-```bash
-# CLI (recommended)
-cordelia-node --config ~/.cordelia/config.toml status
-cordelia-node --config ~/.cordelia/config.toml peers
-cordelia-node --config ~/.cordelia/config.toml groups
-
-# Or via curl (requires bearer token)
-TOKEN=$(cat ~/.cordelia/node-token)
-curl -s -X POST http://127.0.0.1:9473/api/v1/status \
-  -H "Authorization: Bearer $TOKEN" | jq .
-curl -s -X POST http://127.0.0.1:9473/api/v1/peers \
-  -H "Authorization: Bearer $TOKEN" | jq .
-```
-
-## 10. Verify Replication
-
-Write a test memory on one node:
-
-```bash
-TOKEN=$(cat ~/.cordelia/node-token)
-curl -s -X POST http://127.0.0.1:9473/api/v1/l2/write \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "item_id": "test-martin-001",
-    "type": "learning",
-    "data": {"content": "test replication from boot2"},
-    "meta": {"group_id": "seed-drill", "visibility": "group"}
-  }' | jq .
-```
-
-Then check the other node:
-
-```bash
-cordelia-node --config ~/.cordelia/config.toml query test-martin-001
-```
-
-## Updating
-
-### Bare metal nodes (boot1, boot2)
-
-Use the upgrade script to download the latest release binary:
-
-```bash
-# Upgrade to latest release
-./scripts/upgrade.sh
-
-# Or specify a version
-./scripts/upgrade.sh v0.1.1
-```
-
-The script downloads the binary from GitHub Releases, verifies the SHA-256 checksum, stops the service, replaces the binary at `/usr/local/bin/cordelia-node`, restarts the service, and runs a health check.
-
-### Fly.io (boot3)
-
-```bash
-flyctl deploy
-```
-
-### Manual build (development)
-
-```bash
-cd ~/cordelia-core
-git pull
-cargo build --release
-sudo cp target/release/cordelia-node /usr/local/bin/cordelia-node
-sudo systemctl restart cordelia-node
-```
-
-## Troubleshooting
-
-| Symptom | Check |
-|---------|-------|
-| No peer connections | UDP 9474 open? DNS resolves? Bootnode running? |
-| Peers stay Cold/Warm | Check governor tick logs. Groups must overlap. |
-| Replication not working | Both nodes have same group? Peers reached Hot state? |
-| DB errors | Check `~/.cordelia/cordelia.db` permissions. Schema auto-inits on empty DB. |
-| Build fails | `rustup update stable`. Check `Cargo.lock` is committed. |
+1. `flyctl logs -a cordelia-boot3` -- peer connections to boot4
+2. `flyctl logs -a cordelia-boot4` -- peer connections to boot3
+3. `curl https://cordelia-proxy.fly.dev/api/health` -- ok: true
+4. `curl https://cordelia-proxy.fly.dev/api/core/status` -- connected: true, groups include seeddrill-internal
+5. `curl https://cordelia-proxy.fly.dev/api/docs` -- Swagger UI loads
+6. `dig boot3.cordelia.seeddrill.io` / `dig boot4.cordelia.seeddrill.io` -- resolve to Fly IPs
 
 ## Local Development (macOS)
 
-Run a local node on your laptop alongside the MCP server. Uses a separate database to avoid SQLite contention -- merge when TS/Rust integration is deliberate.
+Run a local node on your laptop for development. Uses a separate database to avoid SQLite contention.
 
 ### Setup
 
@@ -267,7 +156,10 @@ entity_id = "russell"  # Change to your entity ID
 listen_addr = "0.0.0.0:9474"
 
 [[network.bootnodes]]
-addr = "boot1.cordelia.seeddrill.io:9474"
+addr = "boot3.cordelia.seeddrill.io:9474"
+
+[[network.bootnodes]]
+addr = "boot4.cordelia.seeddrill.io:9474"
 
 [governor]
 hot_min = 2
@@ -285,10 +177,9 @@ EOF
 ### Build and Run
 
 ```bash
-cd ~/cordelia/cordelia-node
+cd ~/cordelia-core
 cargo build --release
 
-# Run in foreground (or use tmux)
 RUST_LOG=info,cordelia_node=debug \
   target/release/cordelia-node \
   --config ~/.cordelia/config-local.toml
@@ -296,45 +187,16 @@ RUST_LOG=info,cordelia_node=debug \
 
 Identity key and bearer token auto-generate on first run.
 
-### Create Groups
+## Troubleshooting
 
-```bash
-TOKEN=$(cat ~/.cordelia/node-token)
-curl -s http://127.0.0.1:9473/api/v1/groups/create \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"group_id":"seed-drill","name":"Seed Drill","culture":"moderate","security_policy":"{}"}' | jq .
-```
-
-### Expected Output
-
-```
-INFO  starting cordelia-node node_id=dfd773b0...
-INFO  storage opened db=/Users/you/.cordelia/p2p-node.db
-INFO  seeded bootnode bootnode="boot1.cordelia.seeddrill.io:9474" resolved=82.69.29.148:9474
-INFO  outbound handshake complete peer="3d2238..." remote=82.69.29.148:9474
-INFO  connected to peer peer="3d2238..." addr=82.69.29.148:9474
-DEBUG peer state transition peer="3d2238..." from="warm" to="hot"
-DEBUG governor tick complete warm=0 hot=1
-```
-
-### Notes
-
-- **Separate DB**: `p2p-node.db` keeps P2P replication isolated from the MCP server's `cordelia.db`
-- **No systemd on macOS**: Use tmux, or create a launchd plist if you want auto-start
-- **Port 9474/UDP**: Only needed inbound if other nodes will dial you. Outbound to boot1 works through NAT.
-- **Bootnode DNS**: Hostnames resolve automatically (e.g. `boot1.cordelia.seeddrill.io:9474`)
-
-## Current Live Nodes
-
-| Node | Host | DNS | Status |
-|------|------|-----|--------|
-| boot1 | vducdl50 (KVM on pdukvm15) | boot1.cordelia.seeddrill.io:9474 | Running |
-| boot2 | vducdl51 (KVM on pdukvm15) | boot2.cordelia.seeddrill.io:9474 | Running |
-| boot3 | Fly.io (cdg) | boot3.cordelia.seeddrill.io:9474 | Running |
-| russell-local | MacBook (GSV-Heavy-Lifting) | localhost:9474 | Running (dev) |
-| bill-local | MacBook (Bill) | localhost:9474 | Planned (after 1 week soak) |
+| Symptom | Check |
+|---------|-------|
+| No peer connections | UDP 9474 open? DNS resolves? Bootnode running? |
+| Peers stay Cold/Warm | Check governor tick logs. Groups must overlap. |
+| Replication not working | Both nodes have same group? Peers reached Hot state? |
+| DB errors | Check DB file permissions. Schema auto-inits on empty DB. |
+| Build fails | `rustup update stable`. Check `Cargo.lock` is committed. |
 
 ---
 
-*Last updated: 2026-01-31*
+*Last updated: 2026-02-02*

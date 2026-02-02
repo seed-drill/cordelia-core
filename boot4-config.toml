@@ -4,15 +4,13 @@ identity_key = "/home/cordelia/.cordelia/node.key"
 database = "/home/cordelia/.cordelia/cordelia.db"
 api_transport = "http"
 api_addr = "0.0.0.0:9473"
+role = "relay"
+
+[relay]
+posture = "transparent"
 
 [network]
 listen_addr = "0.0.0.0:9474"
-
-[[network.bootnodes]]
-addr = "boot1.cordelia.seeddrill.io:9474"
-
-[[network.bootnodes]]
-addr = "boot2.cordelia.seeddrill.io:9474"
 
 [[network.bootnodes]]
 addr = "boot3.cordelia.seeddrill.io:9474"
