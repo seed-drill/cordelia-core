@@ -1,0 +1,36 @@
+# Cordelia Node Configuration
+# Copy to ~/.cordelia/config.toml and replace __ENTITY_ID__ with your user ID.
+# Generated values (identity key, database) are created by install.sh.
+
+[identity]
+user_id = "__ENTITY_ID__"
+
+[paths]
+memory_root = "~/.cordelia/memory"
+
+[node]
+identity_key = "~/.cordelia/node.key"
+api_transport = "http"
+api_addr = "127.0.0.1:9473"
+database = "~/.cordelia/cordelia.db"
+entity_id = "__ENTITY_ID__"
+
+[network]
+listen_addr = "0.0.0.0:9474"
+
+[[network.bootnodes]]
+addr = "boot1.cordelia.seeddrill.ai:9474"
+
+[[network.bootnodes]]
+addr = "boot2.cordelia.seeddrill.ai:9474"
+
+[governor]
+hot_min = 2
+hot_max = 20
+warm_min = 10
+warm_max = 50
+
+[replication]
+sync_interval_moderate_secs = 300
+tombstone_retention_days = 7
+max_batch_size = 100
