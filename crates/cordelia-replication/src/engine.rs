@@ -38,6 +38,7 @@ impl ReplicationEngine {
     }
 
     /// Determine outbound action when a local write occurs.
+    #[allow(clippy::too_many_arguments)]
     pub fn on_local_write(
         &self,
         group_id: &str,

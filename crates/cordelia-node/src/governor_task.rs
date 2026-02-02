@@ -518,14 +518,11 @@ fn filter_identify_addrs(addrs: Vec<Multiaddr>) -> Vec<Multiaddr> {
     let non_loopback: Vec<Multiaddr> = addrs.into_iter().filter(|a| !is_loopback_addr(a)).collect();
 
     // Check if any address is public (non-RFC1918)
-    let has_public = non_loopback.iter().any(|a| is_public_addr(a));
+    let has_public = non_loopback.iter().any(is_public_addr);
 
     if has_public {
         // Keep only public addresses (discard container-internal RFC1918)
-        non_loopback
-            .into_iter()
-            .filter(|a| is_public_addr(a))
-            .collect()
+        non_loopback.into_iter().filter(is_public_addr).collect()
     } else {
         // LAN-only peer: keep all non-loopback addresses
         non_loopback

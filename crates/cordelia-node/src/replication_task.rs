@@ -29,6 +29,7 @@ struct PendingPush {
 }
 
 /// Run the replication loop until shutdown.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_replication_loop(
     engine: ReplicationEngine,
     pool: PeerPool,
@@ -288,7 +289,7 @@ pub async fn run_replication_loop(
                 for group_id in &current_groups {
                     // Check if this group is due for sync
                     let deadline = next_sync_at.get(group_id).copied();
-                    if deadline.map_or(false, |d| now < d) {
+                    if deadline.is_some_and(|d| now < d) {
                         continue; // not yet due
                     }
 
@@ -303,7 +304,7 @@ pub async fn run_replication_loop(
 
                     let cycle = sync_cycle_count.entry(group_id.clone()).or_insert(0);
                     *cycle += 1;
-                    let is_full_sync = *cycle % FULL_SYNC_EVERY == 0;
+                    let is_full_sync = (*cycle).is_multiple_of(FULL_SYNC_EVERY);
                     let since = if is_full_sync {
                         tracing::info!(
                             group = group_id,
@@ -382,6 +383,7 @@ fn split_into_batches(items: &[FetchedItem]) -> Vec<Vec<FetchedItem>> {
 
 /// Run anti-entropy sync for a single group via SwarmCommand.
 /// Returns the latest `updated_at` from remote headers on success (for incremental sync).
+#[allow(clippy::too_many_arguments)]
 async fn run_anti_entropy(
     engine: &ReplicationEngine,
     pool: &PeerPool,
