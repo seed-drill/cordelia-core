@@ -132,6 +132,10 @@ pub struct NodeSection {
     /// Node role: "relay", "personal" (default), or "keeper".
     #[serde(default = "default_role")]
     pub role: String,
+    /// Initial group memberships. Seeded into storage on first boot.
+    /// Relays don't need groups (they learn via GroupExchange).
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -341,6 +345,7 @@ impl Default for NodeConfig {
                 database: default_database(),
                 entity_id: default_entity_id(),
                 role: default_role(),
+                groups: Vec::new(),
             },
             network: NetworkSection::default(),
             governor: GovernorSection::default(),

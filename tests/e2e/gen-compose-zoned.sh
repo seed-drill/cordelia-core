@@ -133,6 +133,7 @@ gen_config() {
     local bootnodes="$3"  # newline-separated bootnode TOML blocks
     local trusted="$4"    # newline-separated trusted_relays TOML blocks (keeper only)
     local relay_posture="$5"  # optional: "transparent" or "dynamic"
+    local groups="$6"     # optional: TOML array, e.g. '["alpha-internal", "shared-xorg"]'
 
     local relay_section=""
     if [ -n "${relay_posture}" ]; then
@@ -143,6 +144,11 @@ allowed_groups = []
 blocked_groups = []"
     fi
 
+    local groups_line=""
+    if [ -n "${groups}" ]; then
+        groups_line="groups = ${groups}"
+    fi
+
     cat > "$OUT_DIR/config-${hostname}.toml" <<TOML
 [node]
 identity_key = "/home/cordelia/.cordelia/node.key"
@@ -151,6 +157,7 @@ api_addr = "0.0.0.0:9473"
 database = "/home/cordelia/.cordelia/cordelia.db"
 entity_id = "${hostname}"
 role = "${role}"
+${groups_line}
 
 [network]
 listen_addr = "0.0.0.0:9474"
@@ -269,38 +276,42 @@ addr = \"edge-${org}-${e}:9474\""
 
 # Backbone relays -- bootnode to each other, transparent posture
 for i in $(seq 1 "$BACKBONE_COUNT"); do
-    gen_config "boot${i}" "relay" "$(backbone_bootnodes_except "$i")" "" "transparent"
+    gen_config "boot${i}" "relay" "$(backbone_bootnodes_except "$i")" "" "transparent" ""
 done
 
-# Backbone personal nodes -- bootnode to all backbone relays
+# Backbone personal nodes -- bootnode to all backbone relays, shared-xorg group
 for i in $(seq 1 "$BACKBONE_PERSONAL"); do
-    gen_config "agent-bb-${i}" "personal" "$(backbone_bootnodes_all)" "" ""
+    gen_config "agent-bb-${i}" "personal" "$(backbone_bootnodes_all)" "" "" '["shared-xorg"]'
 done
 
-# Per-org: edge relays -- bootnode to backbone, dynamic posture
+# Per-org: edge relays -- bootnode to backbone, dynamic posture (no groups -- learns via exchange)
 for o in $(seq 0 $((ORG_COUNT - 1))); do
     org="${ORG_NAMES[$o]}"
     for e in $(seq 1 "${ORG_EDGES[$o]}"); do
-        gen_config "edge-${org}-${e}" "relay" "$(backbone_bootnodes_all)" "" "dynamic"
+        gen_config "edge-${org}-${e}" "relay" "$(backbone_bootnodes_all)" "" "dynamic" ""
     done
 done
 
 # Per-org: keepers -- bootnode to org edges, trusted relays = org edges
+# Groups: org-internal + shared-xorg
 for o in $(seq 0 $((ORG_COUNT - 1))); do
     org="${ORG_NAMES[$o]}"
     for k in $(seq 1 "${ORG_KEEPERS[$o]}"); do
         gen_config "keeper-${org}-${k}" "keeper" \
             "$(org_edge_bootnodes "$org" "$o")" \
-            "$(org_edge_trusted "$org" "$o")" ""
+            "$(org_edge_trusted "$org" "$o")" "" \
+            "[\"${org}-internal\", \"shared-xorg\"]"
     done
 done
 
 # Per-org: personal nodes -- bootnode to org edges
+# Groups: org-internal + shared-xorg
 for o in $(seq 0 $((ORG_COUNT - 1))); do
     org="${ORG_NAMES[$o]}"
     for p in $(seq 1 "${ORG_PERSONALS[$o]}"); do
         gen_config "agent-${org}-${p}" "personal" \
-            "$(org_edge_bootnodes "$org" "$o")" "" ""
+            "$(org_edge_bootnodes "$org" "$o")" "" "" \
+            "[\"${org}-internal\", \"shared-xorg\"]"
     done
 done
 

@@ -196,6 +196,21 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let token_path = expand_tilde("~/.cordelia/node-token");
     let bearer_token = load_or_create_token(&token_path)?;
 
+    // Seed config-defined groups into storage (idempotent)
+    for group_id in &cfg.node.groups {
+        let exists = storage
+            .read_group(group_id)
+            .unwrap_or(None)
+            .is_some();
+        if !exists {
+            if let Err(e) = storage.write_group(group_id, group_id, "{}", "{}") {
+                tracing::warn!(group = group_id, error = %e, "failed to seed group from config");
+            } else {
+                tracing::info!(group = group_id, "seeded group from config");
+            }
+        }
+    }
+
     // Determine our groups from storage
     let initial_groups: Vec<String> = storage
         .list_groups()
