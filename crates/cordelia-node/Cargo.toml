@@ -4,6 +4,10 @@ version = "0.2.0"
 edition = "2021"
 description = "Cordelia P2P memory replication node"
 
+[lib]
+name = "cordelia_node"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cordelia-node"
 path = "src/main.rs"
@@ -35,3 +39,4 @@ tower = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+base64 = { workspace = true }
