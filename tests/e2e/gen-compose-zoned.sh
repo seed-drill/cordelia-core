@@ -392,8 +392,37 @@ EOF
     done
 }
 
-# Proxy: REST API + dashboard, connected to backbone (talks to boot1)
+# Seed Drill org: edge relays + keeper + proxy (mirrors production deployment)
 if [ "${PROXY_ENABLED}" = "1" ]; then
+    # Generate configs for Seed Drill org nodes
+    gen_config "edge-seeddrill-1" "relay" "$(backbone_bootnodes_all)" "" "dynamic" ""
+    gen_config "edge-seeddrill-2" "relay" "$(backbone_bootnodes_all)" "" "dynamic" ""
+
+    SD_EDGES="
+[[network.bootnodes]]
+addr = \"edge-seeddrill-1:9474\"
+
+[[network.bootnodes]]
+addr = \"edge-seeddrill-2:9474\""
+
+    SD_TRUSTED="
+[[network.trusted_relays]]
+addr = \"edge-seeddrill-1:9474\"
+
+[[network.trusted_relays]]
+addr = \"edge-seeddrill-2:9474\""
+
+    gen_config "keeper-seeddrill-1" "keeper" "$SD_EDGES" "$SD_TRUSTED" "" \
+        '["seeddrill-internal", "shared-xorg"]'
+
+    # Edge relay services (backbone + org-seeddrill)
+    gen_service "edge-seeddrill-1" "backbone,org-seeddrill"
+    gen_service "edge-seeddrill-2" "backbone,org-seeddrill"
+
+    # Keeper service (org-seeddrill only)
+    gen_service "keeper-seeddrill-1" "org-seeddrill"
+
+    # Proxy: REST API + dashboard, on org-seeddrill network (talks to keeper)
     cat >> "$COMPOSE_FILE" <<EOF
 
   proxy:
@@ -406,14 +435,14 @@ if [ "${PROXY_ENABLED}" = "1" ]; then
       - proxy-memory:/app/memory
     environment:
       - CORDELIA_STORAGE=sqlite
-      - CORDELIA_NODE_URL=http://boot1:9473
+      - CORDELIA_NODE_URL=http://keeper-seeddrill-1:9473
       - CORDELIA_NODE_TOKEN=${BEARER_TOKEN}
       - CORDELIA_LOCAL_USERS=admin:admin
       - CORDELIA_HTTP_PORT=3847
       - CORDELIA_EMBEDDING_PROVIDER=none
       - NODE_ENV=production
     depends_on:
-      boot1:
+      keeper-seeddrill-1:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3847/api/health"]
@@ -421,7 +450,7 @@ if [ "${PROXY_ENABLED}" = "1" ]; then
       timeout: 3s
       retries: 10
     networks:
-      - backbone
+      - org-seeddrill
 
 EOF
 fi
@@ -441,9 +470,10 @@ for o in $(seq 0 $((ORG_COUNT - 1))); do
 EOF
 done
 
-# Volumes (proxy needs persistent storage)
 if [ "${PROXY_ENABLED}" = "1" ]; then
     cat >> "$COMPOSE_FILE" <<EOF
+  org-seeddrill:
+    driver: bridge
 
 volumes:
   proxy-memory:
@@ -455,9 +485,6 @@ echo "Generated ${TOTAL} node configs in ${OUT_DIR}/"
 echo "Generated ${COMPOSE_FILE}"
 echo ""
 echo "Topology map:"
-if [ "${PROXY_ENABLED}" = "1" ]; then
-    echo "  [backbone]           proxy (REST API + dashboard on port ${PROXY_PORT})"
-fi
 echo "  [backbone]           boot1..boot${BACKBONE_COUNT}"
 if [ "$BACKBONE_PERSONAL" -gt 0 ]; then
     echo "  [backbone]           agent-bb-1..agent-bb-${BACKBONE_PERSONAL} (personal)"
@@ -470,6 +497,12 @@ for o in $(seq 0 $((ORG_COUNT - 1))); do
         echo "  [org-${org}]          agent-${org}-1..agent-${org}-${ORG_PERSONALS[$o]} (personal)"
     fi
 done
+
+if [ "${PROXY_ENABLED}" = "1" ]; then
+    echo "  [backbone+org-sd]   edge-seeddrill-1..edge-seeddrill-2 (relay, dynamic)"
+    echo "  [org-seeddrill]     keeper-seeddrill-1 (keeper)"
+    echo "  [org-seeddrill]     proxy (REST API + dashboard on port ${PROXY_PORT})"
+fi
 echo ""
 
 # ARP table warning for large topologies

@@ -144,8 +144,16 @@ docker exec cordelia-e2e-orchestrator ./monitor.sh --watch
 
 ## Proxy (REST API + Dashboard)
 
-The proxy container (`cordelia-proxy:test`) runs on the backbone network and
-connects to `boot1` as its upstream node. It provides:
+The proxy container (`cordelia-proxy:test`) runs inside a dedicated `seeddrill`
+org -- behind 2 edge relays with a keeper, mirroring the production deployment
+topology. It connects to `keeper-seeddrill-1` as its upstream node.
+
+```
+[backbone] -- edge-seeddrill-1 -- [org-seeddrill] -- keeper-seeddrill-1 -- proxy
+           \_ edge-seeddrill-2 _/
+```
+
+It provides:
 
 - **REST API** on port 3847 -- full CRUD for L1/L2 memory, groups, users
 - **Swagger docs** at `http://localhost:3847/api/docs`
@@ -158,7 +166,7 @@ Default credentials: `admin:admin`
 # Check proxy health
 curl http://localhost:3847/api/health
 
-# Check node connectivity (proxied from boot1)
+# Check node connectivity (proxied from keeper-seeddrill-1)
 curl http://localhost:3847/api/core/status
 
 # Browse the API
