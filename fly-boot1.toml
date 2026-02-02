@@ -1,11 +1,11 @@
-app = "cordelia-boot3"
+app = "cordelia-boot1"
 primary_region = "lhr"
 
 [build]
   dockerfile = "Dockerfile"
 
   [build.args]
-    BOOT_CONFIG = "boot3-config.toml"
+    BOOT_CONFIG = "boot1-config.toml"
 
 [env]
   RUST_LOG = "info,cordelia_node=debug"

@@ -1,5 +1,5 @@
 [node]
-entity_id = "boot4"
+entity_id = "boot2"
 identity_key = "/home/cordelia/.cordelia/node.key"
 database = "/home/cordelia/.cordelia/cordelia.db"
 api_transport = "http"
@@ -13,7 +13,7 @@ posture = "transparent"
 listen_addr = "0.0.0.0:9474"
 
 [[network.bootnodes]]
-addr = "boot3.cordelia.seeddrill.io:9474"
+addr = "boot1.cordelia.seeddrill.io:9474"
 
 [governor]
 hot_min = 2

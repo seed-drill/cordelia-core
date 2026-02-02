@@ -11,13 +11,13 @@ All production infrastructure runs on Fly.io. Two relay boot nodes provide mesh 
                     |
                 [Fly.io]
                     |
-    boot3 (lhr) -------- boot4 (ams)
+    boot1 (lhr) -------- boot2 (ams)
     relay/transparent     relay/transparent
             \              /
           cordelia-proxy (lhr)
           embedded node = keeper
           groups: [seeddrill-internal, shared-xorg]
-          bootnodes: [boot3, boot4]
+          bootnodes: [boot1, boot2]
           REST API + dashboard on :3847
 ```
 
@@ -34,27 +34,27 @@ Monthly cost: ~$8-9 (2x shared-cpu-1x 256MB boots + 1x shared-cpu-1x 512MB proxy
 
 Order matters -- boot nodes must be up before the keeper can connect.
 
-### 1. Deploy boot3 (London)
+### 1. Deploy boot1 (London)
 
 ```bash
 cd cordelia-core
-flyctl deploy --config fly-boot3.toml --remote-only
+flyctl deploy --config fly-boot1.toml --remote-only
 ```
 
 Verify:
 ```bash
-flyctl logs -a cordelia-boot3 --no-tail | tail -20
+flyctl logs -a cordelia-boot1 --no-tail | tail -20
 ```
 
-### 2. Deploy boot4 (Amsterdam)
+### 2. Deploy boot2 (Amsterdam)
 
 ```bash
-flyctl deploy --config fly-boot4.toml --remote-only
+flyctl deploy --config fly-boot2.toml --remote-only
 ```
 
-Verify boot3 <-> boot4 peering:
+Verify boot1 <-> boot2 peering:
 ```bash
-flyctl logs -a cordelia-boot4 --no-tail | grep -E "(handshake|connected|peer)"
+flyctl logs -a cordelia-boot2 --no-tail | grep -E "(handshake|connected|peer)"
 ```
 
 ### 3. Deploy cordelia-proxy (London)
@@ -81,8 +81,8 @@ Redeploy from the relevant repo:
 ```bash
 # Boot nodes
 cd cordelia-core
-flyctl deploy --config fly-boot3.toml --remote-only
-flyctl deploy --config fly-boot4.toml --remote-only
+flyctl deploy --config fly-boot1.toml --remote-only
+flyctl deploy --config fly-boot2.toml --remote-only
 
 # Proxy
 cd cordelia-proxy
@@ -95,17 +95,17 @@ The config is copied to the Fly volume on first boot only. To update config on a
 
 ```bash
 # SSH into the machine
-flyctl ssh console -a cordelia-boot3
+flyctl ssh console -a cordelia-boot1
 
 # Edit the on-volume config
 vi /home/cordelia/.cordelia/config.toml
 
 # Restart (the process manager will restart the app)
 exit
-flyctl machines restart -a cordelia-boot3
+flyctl machines restart -a cordelia-boot1
 ```
 
-Same procedure for boot4 and cordelia-proxy (proxy config at `/data/core/config.toml`).
+Same procedure for boot2 and cordelia-proxy (proxy config at `/data/core/config.toml`).
 
 ## DNS
 
@@ -113,8 +113,8 @@ All DNS managed in Cloudflare.
 
 | Record | Type | Value |
 |--------|------|-------|
-| boot3.cordelia.seeddrill.io | CNAME | cordelia-boot3.fly.dev |
-| boot4.cordelia.seeddrill.io | CNAME | cordelia-boot4.fly.dev |
+| boot1.cordelia.seeddrill.io | CNAME | cordelia-boot1.fly.dev |
+| boot2.cordelia.seeddrill.io | CNAME | cordelia-boot2.fly.dev |
 
 ## Node Configuration
 
@@ -122,18 +122,18 @@ Both boot nodes use a single parameterised `Dockerfile` with `BOOT_CONFIG` build
 
 | Node | Config | Region | Role |
 |------|--------|--------|------|
-| boot3 | boot3-config.toml | lhr (London) | relay/transparent |
-| boot4 | boot4-config.toml | ams (Amsterdam) | relay/transparent |
+| boot1 | boot1-config.toml | lhr (London) | relay/transparent |
+| boot2 | boot2-config.toml | ams (Amsterdam) | relay/transparent |
 | proxy | fly-node-config.toml (in cordelia-proxy) | lhr (London) | keeper |
 
 ## Verification Checklist
 
-1. `flyctl logs -a cordelia-boot3` -- peer connections to boot4
-2. `flyctl logs -a cordelia-boot4` -- peer connections to boot3
+1. `flyctl logs -a cordelia-boot1` -- peer connections to boot2
+2. `flyctl logs -a cordelia-boot2` -- peer connections to boot1
 3. `curl https://cordelia-proxy.fly.dev/api/health` -- ok: true
 4. `curl https://cordelia-proxy.fly.dev/api/core/status` -- connected: true, groups include seeddrill-internal
 5. `curl https://cordelia-proxy.fly.dev/api/docs` -- Swagger UI loads
-6. `dig boot3.cordelia.seeddrill.io` / `dig boot4.cordelia.seeddrill.io` -- resolve to Fly IPs
+6. `dig boot1.cordelia.seeddrill.io` / `dig boot2.cordelia.seeddrill.io` -- resolve to Fly IPs
 
 ## Local Development (macOS)
 
@@ -156,10 +156,10 @@ entity_id = "russell"  # Change to your entity ID
 listen_addr = "0.0.0.0:9474"
 
 [[network.bootnodes]]
-addr = "boot3.cordelia.seeddrill.io:9474"
+addr = "boot1.cordelia.seeddrill.io:9474"
 
 [[network.bootnodes]]
-addr = "boot4.cordelia.seeddrill.io:9474"
+addr = "boot2.cordelia.seeddrill.io:9474"
 
 [governor]
 hot_min = 2
