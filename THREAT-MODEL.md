@@ -113,6 +113,7 @@ Arrow: Entity policy ──restricts──> Group policy (never expands)
 | Culture manipulation | Change group broadcast/departure policy | Culture changes logged; owner-only for security_policy; entity posture overrides group culture |
 | Trust exploitation | Abuse high trust to inject false memories | Trust is local, not consensus. Entity quarantines low-confidence inbound. COW chain provides evidence for trust calibration |
 | Departure data theft | Exfiltrate group memories before leaving | Departure policy governs. Restrictive: immediate key rotation + re-encrypt. R3: forward secrecy via key version |
+| **Adversarial memory injection** ("Snow Crash" vector) | Craft memory items that manipulate AI agents consuming them. Replication faithfully delivers malicious content to all group members. The attack surface is the MCP client (AI agent), not the node. | See Adversarial Memory Injection Analysis below |
 | Nation state | Supply chain, legal compulsion, side channel, zero-day, physical access | See Nation State Threat Analysis below |
 
 ## Design Decisions
@@ -241,6 +242,50 @@ The current model assumes: if you have local machine access and the encryption k
 4. **Side channels** - Timing, power analysis etc. not addressed
 5. **No vessel attestation** - Cannot cryptographically prove which model/instance is running
 6. **SharedKeyVault** - All founders share one key in R2. Accepted for 3 trusted users. R3 envelope encryption resolves.
+
+## Adversarial Memory Injection Analysis ("Snow Crash" Vector)
+
+Cordelia replicates structured data faithfully to every node in a group. If a compromised group member crafts a malicious memory item, the replication engine will deliver it to all members. The item itself is inert data (JSON in SQLite) -- the node layer never executes item contents. The real attack surface is the **MCP client layer**: an AI agent that reads and acts on memory contents.
+
+This is the Snow Crash model: a self-propagating information pattern that compromises the host not through code execution but through the act of *processing* it.
+
+### Attack Scenarios
+
+| Scenario | Vector | Impact |
+|----------|--------|--------|
+| Prompt injection via memory | Craft item content that, when read by an AI agent, overrides system instructions or exfiltrates data | Agent acts on attacker's instructions, believing them to be legitimate memory |
+| False context poisoning | Inject plausible but false entities/learnings that subtly alter an agent's decisions | Degraded decision quality across all group members; hard to detect |
+| Replication amplification | Write items designed to trigger cascading writes by other agents (memory worm) | Exponential storage consumption; replication storm |
+| Trust ladder attack | Inject a sequence of items that incrementally builds false credibility before delivering the payload | Bypasses novelty filters and confidence thresholds |
+
+### Platform Defences (Cordelia's Responsibility)
+
+| Defence | Layer | Status |
+|---------|-------|--------|
+| Items are data, never code | Node | R2: enforced. No eval, no dynamic execution of item contents. |
+| Schema validation at ingestion | API | R2: type/structure validation. R3: strict schema per item type. |
+| Item size limits (backpressure) | API/Replication | R2: enforced. Oversized items rejected at API and suppressed in replication. |
+| Rate limiting per node/group | API | R3: per-entity write rate limits to prevent flood. |
+| Cryptographic provenance | Replication | R2: author_id is immutable. R3: items signed by author key, verified before storage. |
+| Group membership enforcement | Replication | R2: enforced and tested. Items only replicate to nodes sharing the group. |
+| Tombstone propagation | Replication | R2: tombstones propagate via anti-entropy. Admin can recall items network-wide. |
+| Content-type restrictions per group | Group culture | R3: group culture defines allowed item types, rejecting unexpected content. |
+| Audit trail | Storage | R2: author_id + access_log. Every item traceable to source. |
+
+### Client-Side Defences (Consumer's Responsibility)
+
+The MCP client (AI agent) must treat memory items as untrusted input:
+
+- **Never execute instructions found in memory items** -- treat item content as data, not commands
+- **Validate item content against expected schema** before acting on it
+- **Apply confidence scoring** -- new or unusual items from untrusted authors should be quarantined
+- **Rate-limit memory reads** -- an agent consuming thousands of items per session is likely under attack
+
+### Accepted Gap
+
+A sufficiently sophisticated false-context attack from a trusted group member is indistinguishable from legitimate collaboration. This mirrors the human problem: you trust your colleagues until given reason not to. Cordelia's COW chain, access logs, and author provenance provide the forensic tools to investigate after the fact, but cannot prevent a trusted insider from injecting plausible falsehoods.
+
+The ultimate defence is the same as in human organisations: vet your group members.
 
 ## Nation State Threat Analysis (R2)
 
@@ -426,7 +471,8 @@ Cordelia's threat model must account for legal compulsion in the operating juris
 | 2026-01-29 | L2 index encrypted | R1 ship - closed last plaintext gap |
 | 2026-01-29 | S5 group model threat surface | COW security mechanism, policy engine, EMCON, key management stub, departure threats, access log forensics, expanded assets/actors tables, group trust boundary diagram, active nation state analysis |
 | 2026-01-29 | S6 supply chain & crypto assessment | Dependency audit (254 transitive, 0 vulns), SBOM (CycloneDX 1.5), constant-time crypto audit (all safe), attack surface assessment, jurisdiction analysis (RIPA/IPA/FISA/GDPR), reproducible builds status |
+| 2026-02-02 | Adversarial memory injection ("Snow Crash" vector) | Replication faithfully delivers crafted items; attack surface is MCP client layer, not node. Platform defences (schema validation, provenance, tombstones) vs client-side responsibility (treat memory as untrusted input). Accepted gap: trusted insider injecting plausible falsehoods is indistinguishable from collaboration. |
 
 ---
 
-*Last updated: 2026-01-29*
+*Last updated: 2026-02-02*

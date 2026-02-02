@@ -9,7 +9,7 @@ use crate::harness::{scaled_timeout, test_node_count, TestMesh, TestNodeBuilder}
 
 /// Write on node 0 with chatty culture group, verify push replication to all N nodes.
 /// Node count from TEST_NODE_COUNT (default 2).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_item_replication_chatty() {
     let n = test_node_count(2);
     let groups = vec!["chatty-group".into()];
@@ -152,7 +152,7 @@ async fn test_group_scoped_replication() {
 /// Write item on node 0, measure wall-clock time until all N nodes have it.
 /// Prints actual propagation latency for benchmarking.
 /// Node count from TEST_NODE_COUNT (default 5).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_replication_propagation_timing() {
     let n = test_node_count(5);
     let timeout = scaled_timeout(n, 90);
@@ -241,7 +241,7 @@ async fn test_replication_propagation_timing() {
 /// Topology: nodes 0..N/3 in [g1,g2], nodes N/3..2N/3 in [g1 only], nodes 2N/3..N in [g2 only].
 /// Write to g1 -> all g1 members get it, g2-only members do NOT.
 /// Node count from TEST_NODE_COUNT (default 6).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_group_isolation_at_scale() {
     let n = test_node_count(6);
     assert!(n >= 6, "group isolation test needs at least 6 nodes");
@@ -319,7 +319,7 @@ async fn test_group_isolation_at_scale() {
 /// Every node writes a unique item simultaneously. Verify all N items reach all N nodes.
 /// This is the N^2 stress test -- at 20 nodes that's 380 replication events.
 /// Node count from TEST_NODE_COUNT (default 5).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_concurrent_write_convergence() {
     let n = test_node_count(5);
     let timeout = scaled_timeout(n, 90);

@@ -16,7 +16,7 @@ async fn test_two_node_convergence() {
 }
 
 /// N nodes all connected (warm or hot). Default 3, override with TEST_NODE_COUNT.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_n_node_convergence() {
     let n = test_node_count(3);
     let timeout = scaled_timeout(n, 90);
@@ -73,7 +73,7 @@ async fn test_staggered_startup() {
 
 /// Stable N-node mesh, then add one more node. All connected.
 /// Base mesh size from TEST_NODE_COUNT (default 2).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_late_joiner() {
     let n = test_node_count(2);
     let total = n + 1;
@@ -118,7 +118,7 @@ async fn test_late_joiner() {
 
 /// Shutdown 1 of N nodes, rebuild it, verify reconvergence.
 /// Node count from TEST_NODE_COUNT (default 3).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_rolling_restart() {
     let n = test_node_count(3);
     let timeout = scaled_timeout(n, 90);
@@ -169,7 +169,7 @@ async fn test_rolling_restart() {
 
 /// Forcibly disconnect a peer mid-mesh, verify gossip rediscovery and reconnection.
 /// Simulates the boot4 pattern: connection drops without node restart.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_peer_disconnect_recovery() {
     let n = test_node_count(3);
     assert!(n >= 2, "disconnect recovery requires at least 2 nodes");
@@ -193,7 +193,7 @@ async fn test_peer_disconnect_recovery() {
 /// Verify connection count stays stable after mesh converges.
 /// Detects the boot4 bug: cold bootnode placeholder not consumed when peer
 /// connects inbound before first governor tick, causing connection accumulation.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_connection_stability() {
     let n = test_node_count(3);
     let timeout = scaled_timeout(n, 90);
