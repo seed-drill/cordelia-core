@@ -144,7 +144,7 @@ role = "${role}"
 
 [network]
 listen_addr = "0.0.0.0:9474"
-external_addr = "/ip4/${hostname}/tcp/9474"
+external_addr = "${hostname}:9474"
 
 ${bootnodes}
 
@@ -213,7 +213,7 @@ backbone_bootnodes_except() {
         if [ "$i" -ne "$exclude" ]; then
             result="${result}
 [[network.bootnodes]]
-addr = \"/ip4/boot${i}/tcp/9474\""
+addr = \"boot${i}:9474\""
         fi
     done
     echo "$result"
@@ -224,7 +224,7 @@ backbone_bootnodes_all() {
     for i in $(seq 1 "$BACKBONE_COUNT"); do
         result="${result}
 [[network.bootnodes]]
-addr = \"/ip4/boot${i}/tcp/9474\""
+addr = \"boot${i}:9474\""
     done
     echo "$result"
 }
@@ -236,7 +236,7 @@ org_edge_bootnodes() {
     for e in $(seq 1 "${ORG_EDGES[$org_idx]}"); do
         result="${result}
 [[network.bootnodes]]
-addr = \"/ip4/edge-${org}-${e}/tcp/9474\""
+addr = \"edge-${org}-${e}:9474\""
     done
     echo "$result"
 }
@@ -248,7 +248,7 @@ org_edge_trusted() {
     for e in $(seq 1 "${ORG_EDGES[$org_idx]}"); do
         result="${result}
 [[network.trusted_relays]]
-addr = \"/ip4/edge-${org}-${e}/tcp/9474\""
+addr = \"edge-${org}-${e}:9474\""
     done
     echo "$result"
 }
