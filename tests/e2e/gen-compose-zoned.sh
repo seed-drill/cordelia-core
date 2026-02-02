@@ -416,4 +416,25 @@ for o in $(seq 0 $((ORG_COUNT - 1))); do
     fi
 done
 echo ""
+
+# ARP table warning for large topologies
+if [ "$TOTAL" -gt 100 ]; then
+    echo "WARNING: ${TOTAL} containers across ${ORG_COUNT} bridge networks will"
+    echo "  exhaust default Linux ARP neighbour table limits. Before starting:"
+    echo ""
+    echo "  sudo sysctl -w net.ipv4.neigh.default.gc_thresh1=4096"
+    echo "  sudo sysctl -w net.ipv4.neigh.default.gc_thresh2=8192"
+    echo "  sudo sysctl -w net.ipv4.neigh.default.gc_thresh3=16384"
+    echo ""
+    echo "  To persist across reboots:"
+    echo "  echo 'net.ipv4.neigh.default.gc_thresh1 = 4096' | sudo tee -a /etc/sysctl.d/99-cordelia-arp.conf"
+    echo "  echo 'net.ipv4.neigh.default.gc_thresh2 = 8192' | sudo tee -a /etc/sysctl.d/99-cordelia-arp.conf"
+    echo "  echo 'net.ipv4.neigh.default.gc_thresh3 = 16384' | sudo tee -a /etc/sysctl.d/99-cordelia-arp.conf"
+    echo "  sudo sysctl -p /etc/sysctl.d/99-cordelia-arp.conf"
+    echo ""
+    echo "  Without this, the kernel ARP cache overflows and ALL network"
+    echo "  connectivity dies (including SSH). Default limits: 128/512/1024."
+    echo ""
+fi
+
 echo "Run with: docker compose -f ${COMPOSE_FILE} up -d --wait"
