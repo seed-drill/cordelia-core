@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+type SharedGroups = Arc<RwLock<Vec<GroupId>>>;
+
 /// Handle to a connected peer (metadata only).
 #[derive(Debug, Clone)]
 pub struct PeerHandle {
@@ -30,14 +32,14 @@ pub struct PeerHandle {
 #[derive(Clone)]
 pub struct PeerPool {
     inner: Arc<RwLock<HashMap<NodeId, PeerHandle>>>,
-    our_groups: Arc<Vec<GroupId>>,
+    our_groups: SharedGroups,
 }
 
 impl PeerPool {
-    pub fn new(our_groups: Vec<GroupId>) -> Self {
+    pub fn new(our_groups: SharedGroups) -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashMap::new())),
-            our_groups: Arc::new(our_groups),
+            our_groups,
         }
     }
 
@@ -51,12 +53,14 @@ impl PeerPool {
         protocol_version: u16,
         is_relay: bool,
     ) {
+        let our_groups = self.our_groups.read().await;
         let group_intersection: Vec<GroupId> = peer_groups
             .iter()
-            .filter(|g| self.our_groups.contains(g))
+            .filter(|g| our_groups.contains(g))
             .cloned()
             .collect();
 
+        let state_name = state.name();
         let handle = PeerHandle {
             node_id,
             addrs,
@@ -68,12 +72,32 @@ impl PeerPool {
             is_relay,
         };
 
-        self.inner.write().await.insert(node_id, handle);
+        let pool_size = {
+            let mut pool = self.inner.write().await;
+            pool.insert(node_id, handle);
+            pool.len()
+        };
+        tracing::info!(
+            %node_id,
+            state = state_name,
+            is_relay,
+            pool_size,
+            "pool: peer added"
+        );
     }
 
     /// Remove a peer from the pool.
     pub async fn remove(&self, node_id: &NodeId) -> Option<PeerHandle> {
-        self.inner.write().await.remove(node_id)
+        let mut pool = self.inner.write().await;
+        let removed = pool.remove(node_id);
+        if removed.is_some() {
+            tracing::info!(
+                %node_id,
+                pool_size = pool.len(),
+                "pool: peer removed"
+            );
+        }
+        removed
     }
 
     /// Get a clone of a peer handle.
@@ -144,13 +168,21 @@ impl PeerPool {
 
     /// Update a peer's groups and recompute group_intersection.
     pub async fn update_peer_groups(&self, node_id: &NodeId, groups: Vec<GroupId>) {
+        let our_groups = self.our_groups.read().await;
         if let Some(handle) = self.inner.write().await.get_mut(node_id) {
             handle.group_intersection = groups
                 .iter()
-                .filter(|g| self.our_groups.contains(g))
+                .filter(|g| our_groups.contains(g))
                 .cloned()
                 .collect();
             handle.groups = groups;
+        }
+    }
+
+    /// Update a peer's addresses (from identify).
+    pub async fn update_addrs(&self, node_id: &NodeId, addrs: Vec<Multiaddr>) {
+        if let Some(handle) = self.inner.write().await.get_mut(node_id) {
+            handle.addrs = addrs;
         }
     }
 
@@ -191,12 +223,18 @@ impl PeerPool {
                     "warm" => handle.state = PeerState::Warm,
                     _ => {}
                 }
+                tracing::debug!(
+                    peer = %node_id,
+                    from,
+                    to,
+                    "pool: state transition applied"
+                );
             } else {
                 tracing::warn!(
                     peer = %node_id,
                     from,
                     to,
-                    "governor transition for peer not in pool"
+                    "pool: governor transition for peer not in pool"
                 );
             }
         }
@@ -204,6 +242,7 @@ impl PeerPool {
         // Remove disconnected peers from pool (caller sends SwarmCommand::Disconnect)
         for node_id in &actions.disconnect {
             if pool.remove(node_id).is_some() {
+                tracing::debug!(peer = %node_id, "pool: peer removed by governor");
                 disconnected.push(*node_id);
             }
         }
@@ -253,7 +292,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_pool_new() {
-        let pool = PeerPool::new(vec!["g1".into()]);
+        let groups = Arc::new(RwLock::new(vec!["g1".into()]));
+        let pool = PeerPool::new(groups);
         assert_eq!(pool.len().await, 0);
     }
 }

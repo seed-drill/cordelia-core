@@ -149,6 +149,30 @@ pub trait Storage: Send + Sync {
 
     // FTS search (used by API search endpoint)
     fn fts_search(&self, query: &str, limit: u32) -> Result<Vec<String>>;
+
+    // Storage stats (mempool diagnostics)
+    fn storage_stats(&self) -> Result<StorageStats>;
+}
+
+/// Aggregate storage statistics for diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageStats {
+    /// Total L2 items stored.
+    pub l2_item_count: u64,
+    /// Total bytes of L2 item data.
+    pub l2_data_bytes: u64,
+    /// Number of groups.
+    pub group_count: u64,
+    /// Per-group item counts and data sizes.
+    pub groups: Vec<GroupStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupStats {
+    pub group_id: String,
+    pub item_count: u64,
+    pub data_bytes: u64,
+    pub member_count: u64,
 }
 
 /// SQLite-backed storage.
@@ -615,6 +639,67 @@ impl Storage for SqliteStorage {
             params![data],
         )?;
         Ok(())
+    }
+
+    fn storage_stats(&self) -> Result<StorageStats> {
+        let conn = self.db()?;
+
+        let l2_item_count: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM l2_items",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let l2_data_bytes: u64 = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM l2_items",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let group_count: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM groups",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let mut stmt = conn.prepare(
+            "SELECT g.id,
+                    COALESCE(i.cnt, 0),
+                    COALESCE(i.bytes, 0),
+                    COALESCE(m.cnt, 0)
+             FROM groups g
+             LEFT JOIN (
+                 SELECT group_id, COUNT(*) as cnt, SUM(LENGTH(data)) as bytes
+                 FROM l2_items
+                 WHERE group_id IS NOT NULL
+                 GROUP BY group_id
+             ) i ON i.group_id = g.id
+             LEFT JOIN (
+                 SELECT group_id, COUNT(*) as cnt
+                 FROM group_members
+                 GROUP BY group_id
+             ) m ON m.group_id = g.id
+             ORDER BY g.id",
+        )?;
+
+        let groups = stmt
+            .query_map([], |row| {
+                Ok(GroupStats {
+                    group_id: row.get(0)?,
+                    item_count: row.get(1)?,
+                    data_bytes: row.get(2)?,
+                    member_count: row.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // Count private (ungrouped) items too
+        Ok(StorageStats {
+            l2_item_count,
+            l2_data_bytes,
+            group_count,
+            groups,
+        })
     }
 
     fn fts_search(&self, query: &str, limit: u32) -> Result<Vec<String>> {

@@ -13,7 +13,7 @@ use libp2p::{identity, Multiaddr, PeerId, StreamProtocol, Swarm};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 
 // ============================================================================
 // Behaviour definition
@@ -181,7 +181,7 @@ pub async fn run_swarm_loop(
     mut cmd_rx: mpsc::Receiver<SwarmCommand>,
     event_tx: broadcast::Sender<SwarmEvent2>,
     storage: Arc<dyn Storage>,
-    our_groups: Vec<String>,
+    shared_groups: Arc<RwLock<Vec<String>>>,
     pool: crate::peer_pool::PeerPool,
     our_role: crate::config::NodeRole,
     mut shutdown: broadcast::Receiver<()>,
@@ -206,29 +206,38 @@ pub async fn run_swarm_loop(
                 let Some(cmd) = cmd else { break };
                 match cmd {
                     SwarmCommand::Dial(addr) => {
+                        tracing::debug!(%addr, "net: dialling");
                         if let Err(e) = swarm.dial(addr.clone()) {
-                            tracing::warn!(%addr, "dial failed: {e}");
+                            tracing::warn!(%addr, "net: dial failed: {e}");
                         }
                     }
                     SwarmCommand::Disconnect(peer_id) => {
-                        let _ = swarm.disconnect_peer_id(peer_id);
+                        tracing::debug!(%peer_id, "net: disconnecting peer");
+                        if let Err(e) = swarm.disconnect_peer_id(peer_id) {
+                            tracing::warn!(%peer_id, "net: disconnect failed: {e:?}");
+                        }
                     }
                     SwarmCommand::SendPeerShareRequest { peer, request, response_tx } => {
+                        tracing::debug!(%peer, max_peers = request.max_peers, "net: sending peer share request");
                         let req_id = swarm.behaviour_mut().peer_share.send_request(&peer, request);
                         pending_peer_share.insert(req_id, response_tx);
                     }
                     SwarmCommand::SendSyncRequest { peer, request, response_tx } => {
+                        tracing::debug!(%peer, group = request.group_id, "net: sending sync request");
                         let req_id = swarm.behaviour_mut().memory_sync.send_request(&peer, request);
                         pending_sync.insert(req_id, response_tx);
                     }
                     SwarmCommand::SendFetchRequest { peer, request, response_tx } => {
+                        tracing::debug!(%peer, items = request.item_ids.len(), "net: sending fetch request");
                         let req_id = swarm.behaviour_mut().memory_fetch.send_request(&peer, request);
                         pending_fetch.insert(req_id, response_tx);
                     }
                     SwarmCommand::SendMemoryPush { peer, request } => {
+                        tracing::debug!(%peer, items = request.items.len(), "net: sending push");
                         swarm.behaviour_mut().memory_push.send_request(&peer, request);
                     }
                     SwarmCommand::SendGroupExchange { peer, request, response_tx } => {
+                        tracing::debug!(%peer, our_groups = request.groups.len(), "net: sending group exchange");
                         let req_id = swarm.behaviour_mut().group_exchange.send_request(&peer, request);
                         pending_group_exchange.insert(req_id, response_tx);
                     }
@@ -247,30 +256,55 @@ pub async fn run_swarm_loop(
                         num_established,
                         ..
                     } => {
+                        let addr = endpoint.get_remote_address().clone();
+                        let direction = if endpoint.is_dialer() { "outbound" } else { "inbound" };
+                        let conns = num_established.get();
+                        tracing::info!(
+                            %peer_id,
+                            %addr,
+                            direction,
+                            connections = conns,
+                            "net: connection established"
+                        );
                         // Only emit connect for the first connection to this peer
-                        if num_established.get() == 1 {
-                            let addr = endpoint.get_remote_address().clone();
-                            let _ = event_tx.send(SwarmEvent2::PeerConnected {
+                        if conns == 1 {
+                            if let Err(e) = event_tx.send(SwarmEvent2::PeerConnected {
                                 peer_id,
                                 addrs: vec![addr],
-                            });
+                            }) {
+                                tracing::warn!(%peer_id, "net: failed to send PeerConnected event: {e}");
+                            }
                         }
                     }
                     SwarmEvent::ConnectionClosed {
                         peer_id,
                         num_established,
+                        cause,
                         ..
                     } => {
+                        tracing::info!(
+                            %peer_id,
+                            remaining = num_established,
+                            cause = cause.as_ref().map(|c| format!("{c}")).as_deref().unwrap_or("clean"),
+                            "net: connection closed"
+                        );
                         // Only emit disconnect when last connection closes
                         if num_established == 0 {
-                            let _ =
-                                event_tx.send(SwarmEvent2::PeerDisconnected { peer_id });
+                            if let Err(e) = event_tx.send(SwarmEvent2::PeerDisconnected { peer_id }) {
+                                tracing::warn!(%peer_id, "net: failed to send PeerDisconnected event: {e}");
+                            }
                         }
                     }
-                    SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
+                    SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                        tracing::warn!(
+                            peer = ?peer_id,
+                            error = %error,
+                            "net: outgoing connection failed"
+                        );
                         let _ = event_tx.send(SwarmEvent2::DialFailure { peer_id });
                     }
                     SwarmEvent::ExternalAddrConfirmed { address } => {
+                        tracing::info!(%address, "net: external address confirmed");
                         let _ = event_tx.send(SwarmEvent2::ExternalAddrConfirmed { addr: address });
                     }
                     SwarmEvent::Behaviour(CordeliaBehaviourEvent::PeerShare(
@@ -293,16 +327,22 @@ pub async fn run_swarm_loop(
                                 role: if h.is_relay { "relay".into() } else { our_role.as_str().into() },
                             })
                             .collect();
+                        tracing::debug!(
+                            requested = max,
+                            shared = peers.len(),
+                            "net: served peer share request"
+                        );
                         let resp = PeerShareResponse { peers };
                         let _ = swarm.behaviour_mut().peer_share.send_response(channel, resp);
                     }
                     SwarmEvent::Behaviour(ev) => {
+                        let groups_snap = shared_groups.read().await.clone();
                         handle_behaviour_event(
                             ev,
                             &mut swarm,
                             &event_tx,
                             &storage,
-                            &our_groups,
+                            &groups_snap,
                             &mut pending_peer_share,
                             &mut pending_sync,
                             &mut pending_fetch,
@@ -314,7 +354,13 @@ pub async fn run_swarm_loop(
             }
 
             _ = shutdown.recv() => {
-                tracing::info!("swarm shutting down");
+                tracing::info!(
+                    pending_sync = pending_sync.len(),
+                    pending_fetch = pending_fetch.len(),
+                    pending_peer_share = pending_peer_share.len(),
+                    pending_group_exchange = pending_group_exchange.len(),
+                    "net: swarm shutting down"
+                );
                 break;
             }
         }
@@ -368,6 +414,13 @@ fn handle_behaviour_event(
             info,
             ..
         }) => {
+            tracing::debug!(
+                %peer_id,
+                agent = info.agent_version,
+                listen_addrs = info.listen_addrs.len(),
+                observed = %info.observed_addr,
+                "net: identify received"
+            );
             let _ = event_tx.send(SwarmEvent2::IdentifyReceived {
                 peer_id,
                 listen_addrs: info.listen_addrs,
@@ -395,6 +448,7 @@ fn handle_behaviour_event(
             error,
             ..
         }) => {
+            tracing::warn!(error = %error, "net: peer share request failed");
             if let Some(tx) = pending_peer_share.remove(&request_id) {
                 let _ = tx.send(Err(error.to_string()));
             }
@@ -409,6 +463,13 @@ fn handle_behaviour_event(
             ..
         }) => {
             let resp = handle_sync_request(storage, &request);
+            tracing::debug!(
+                group = request.group_id,
+                since = request.since.as_deref().unwrap_or("(full)"),
+                headers_returned = resp.items.len(),
+                has_more = resp.has_more,
+                "net: served sync request"
+            );
             let _ = swarm
                 .behaviour_mut()
                 .memory_sync
@@ -431,6 +492,7 @@ fn handle_behaviour_event(
             error,
             ..
         }) => {
+            tracing::warn!(error = %error, "net: sync request failed");
             if let Some(tx) = pending_sync.remove(&request_id) {
                 let _ = tx.send(Err(error.to_string()));
             }
@@ -444,7 +506,13 @@ fn handle_behaviour_event(
                 },
             ..
         }) => {
+            let requested = request.item_ids.len();
             let resp = handle_fetch_request(storage, &request);
+            tracing::debug!(
+                requested,
+                returned = resp.items.len(),
+                "net: served fetch request"
+            );
             let _ = swarm
                 .behaviour_mut()
                 .memory_fetch
@@ -467,6 +535,7 @@ fn handle_behaviour_event(
             error,
             ..
         }) => {
+            tracing::warn!(error = %error, "net: fetch request failed");
             if let Some(tx) = pending_fetch.remove(&request_id) {
                 let _ = tx.send(Err(error.to_string()));
             }
@@ -480,24 +549,50 @@ fn handle_behaviour_event(
                 },
             ..
         }) => {
+            let item_count = request.items.len();
             let ack = handle_push_request(storage, &request, our_groups);
+            if ack.rejected > 0 {
+                tracing::warn!(
+                    items = item_count,
+                    stored = ack.stored,
+                    rejected = ack.rejected,
+                    "net: push received (with rejections)"
+                );
+            } else if ack.stored > 0 {
+                tracing::info!(
+                    items = item_count,
+                    stored = ack.stored,
+                    "net: push received"
+                );
+            }
             let _ = swarm
                 .behaviour_mut()
                 .memory_push
                 .send_response(channel, ack);
         }
         CordeliaBehaviourEvent::MemoryPush(request_response::Event::Message {
-            message: request_response::Message::Response { .. },
+            message: request_response::Message::Response { response, .. },
             ..
         }) => {
-            // Push ack received -- no action needed
+            tracing::debug!(
+                stored = response.stored,
+                rejected = response.rejected,
+                "net: push ack received"
+            );
         }
 
         // -- Group Exchange --
         CordeliaBehaviourEvent::GroupExchange(request_response::Event::Message {
-            message: request_response::Message::Request { channel, .. },
+            message: request_response::Message::Request { channel, request, .. },
+            peer,
             ..
         }) => {
+            tracing::debug!(
+                %peer,
+                their_groups = request.groups.len(),
+                our_groups = our_groups.len(),
+                "net: served group exchange request"
+            );
             let resp = GroupExchangeResponse {
                 groups: our_groups.to_vec(),
             };
@@ -523,12 +618,37 @@ fn handle_behaviour_event(
             error,
             ..
         }) => {
+            tracing::warn!(error = %error, "net: group exchange request failed");
             if let Some(tx) = pending_group_exchange.remove(&request_id) {
                 let _ = tx.send(Err(error.to_string()));
             }
         }
 
-        // Catch-all for remaining events (InboundFailure, ping failures, etc.)
+        // Memory push outbound failure (fire-and-forget, no pending channel)
+        CordeliaBehaviourEvent::MemoryPush(request_response::Event::OutboundFailure {
+            error,
+            ..
+        }) => {
+            tracing::warn!(error = %error, "net: push outbound failure");
+        }
+
+        // Log inbound failures (peer failed to respond to our request)
+        CordeliaBehaviourEvent::MemorySync(request_response::Event::InboundFailure {
+            error,
+            ..
+        })
+        | CordeliaBehaviourEvent::MemoryFetch(request_response::Event::InboundFailure {
+            error,
+            ..
+        })
+        | CordeliaBehaviourEvent::MemoryPush(request_response::Event::InboundFailure {
+            error,
+            ..
+        }) => {
+            tracing::debug!(error = %error, "net: inbound request failure");
+        }
+
+        // Catch-all for remaining events (ping failures, identify push, etc.)
         _ => {}
     }
 }

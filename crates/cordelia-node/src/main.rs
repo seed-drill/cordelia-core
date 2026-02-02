@@ -49,6 +49,8 @@ enum Commands {
     Peers,
     /// List groups
     Groups,
+    /// Show replication diagnostics
+    Diagnostics,
     /// Read an L2 item by ID
     Query {
         /// Item ID to read
@@ -109,6 +111,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Groups) => {
             cli_api_call(&cfg, "/api/v1/groups/list", "{}").await?;
+        }
+        Some(Commands::Diagnostics) => {
+            cli_api_call(&cfg, "/api/v1/diagnostics", "{}").await?;
         }
         Some(Commands::Query { item_id }) => {
             let body = serde_json::json!({ "item_id": item_id }).to_string();
@@ -200,8 +205,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         .map(|g| g.id)
         .collect();
     tracing::info!(groups = ?initial_groups, "loaded groups");
-    let shared_groups = Arc::new(tokio::sync::RwLock::new(initial_groups.clone()));
-    let our_groups = initial_groups;
+    let shared_groups = Arc::new(tokio::sync::RwLock::new(initial_groups));
 
     // Shutdown broadcast channel
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
@@ -210,13 +214,23 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let (write_tx, write_rx) =
         tokio::sync::broadcast::channel::<cordelia_api::WriteNotification>(256);
 
+    // Replication diagnostics counters (shared between replication task and API)
+    let repl_stats = Arc::new(cordelia_api::ReplicationStats::new());
+
     // Build libp2p swarm
     let listen_addr: libp2p::Multiaddr = parse_listen_addr(&cfg.network.listen_addr)?;
-    let swarm = swarm_task::build_swarm(keypair, listen_addr)
+    let mut swarm = swarm_task::build_swarm(keypair, listen_addr)
         .map_err(|e| anyhow::anyhow!("swarm build failed: {e}"))?;
 
+    // Add external address so identify announces our public IP (critical for Docker/NAT)
+    if let Some(ext) = &cfg.network.external_addr {
+        let ext_addr: libp2p::Multiaddr = parse_listen_addr(ext)?;
+        swarm.add_external_address(ext_addr.clone());
+        tracing::info!(%ext_addr, "added external address");
+    }
+
     // Build peer pool
-    let pool = peer_pool::PeerPool::new(our_groups.clone());
+    let pool = peer_pool::PeerPool::new(shared_groups.clone());
 
     // Build API state
     let pool_for_count = pool.clone();
@@ -237,6 +251,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
             let pool = pool_for_list.clone();
             Box::pin(async move { pool.peer_details().await })
         })),
+        replication_stats: Some(repl_stats.clone()),
     });
 
     // Build governor with role-based targets and dial policy
@@ -281,7 +296,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     );
     let governor = Arc::new(tokio::sync::Mutex::new(Governor::with_dial_policy(
         governor_targets,
-        our_groups.clone(),
+        shared_groups.read().await.clone(),
         dial_policy,
     )));
 
@@ -301,12 +316,12 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     // Spawn swarm task
     let swarm_handle = {
         let storage = storage.clone();
-        let groups = our_groups.clone();
+        let shared_groups = shared_groups.clone();
         let event_tx = event_tx.clone();
         let pool = pool.clone();
         let shutdown = shutdown_tx.subscribe();
         tokio::spawn(async move {
-            swarm_task::run_swarm_loop(swarm, cmd_rx, event_tx, storage, groups, pool, our_role, shutdown).await;
+            swarm_task::run_swarm_loop(swarm, cmd_rx, event_tx, storage, shared_groups, pool, our_role, shutdown).await;
         })
     };
 
@@ -317,11 +332,11 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let cmd_tx = cmd_tx.clone();
         let event_rx = event_tx.subscribe();
         let bootnodes = cfg.network.bootnodes.clone();
-        let groups = our_groups.clone();
+        let shared_groups = shared_groups.clone();
         let shutdown = shutdown_tx.subscribe();
         tokio::spawn(async move {
             governor_task::run_governor_loop(
-                governor, pool, cmd_tx, event_rx, bootnodes, groups, shutdown,
+                governor, pool, cmd_tx, event_rx, bootnodes, shared_groups, shutdown,
             )
             .await;
         })
@@ -334,6 +349,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let shared_groups = shared_groups.clone();
         let cmd_tx = cmd_tx.clone();
         let shutdown = shutdown_tx.subscribe();
+        let stats = repl_stats.clone();
         tokio::spawn(async move {
             replication_task::run_replication_loop(
                 repl_engine,
@@ -343,6 +359,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 cmd_tx,
                 write_rx,
                 shutdown,
+                stats,
             )
             .await;
         })
@@ -556,6 +573,9 @@ impl cordelia_storage::Storage for StorageClone {
     fn fts_search(&self, query: &str, limit: u32) -> cordelia_storage::Result<Vec<String>> {
         self.0.fts_search(query, limit)
     }
+    fn storage_stats(&self) -> cordelia_storage::Result<cordelia_storage::StorageStats> {
+        self.0.storage_stats()
+    }
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
@@ -624,7 +644,7 @@ mod tests {
             Arc::new(SqliteStorage::create_new(&dir_b.path().join("b.db")).unwrap());
 
         let group_id = "test-group";
-        let our_groups = vec![group_id.to_string()];
+        let shared_groups = Arc::new(tokio::sync::RwLock::new(vec![group_id.to_string()]));
 
         // Build swarms on ephemeral ports
         let addr_a: libp2p::Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
@@ -644,15 +664,15 @@ mod tests {
         // Spawn swarm tasks
         let sa = storage_a.clone();
         let sb = storage_b.clone();
-        let ga = our_groups.clone();
-        let gb = our_groups.clone();
+        let ga = shared_groups.clone();
+        let gb = shared_groups.clone();
         let eta = event_tx_a.clone();
         let etb = event_tx_b.clone();
         let shut_a = shutdown_tx.subscribe();
         let shut_b = shutdown_tx.subscribe();
 
-        let pool_a = peer_pool::PeerPool::new(our_groups.clone());
-        let pool_b = peer_pool::PeerPool::new(our_groups.clone());
+        let pool_a = peer_pool::PeerPool::new(shared_groups.clone());
+        let pool_b = peer_pool::PeerPool::new(shared_groups.clone());
         let _swarm_a_handle = tokio::spawn(async move {
             swarm_task::run_swarm_loop(swarm_a, cmd_rx_a, eta, sa, ga, pool_a, config::NodeRole::Personal, shut_a).await;
         });

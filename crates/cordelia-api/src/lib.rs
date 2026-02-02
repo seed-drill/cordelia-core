@@ -13,6 +13,7 @@ use axum::{
 };
 use cordelia_storage::{L2ItemWrite, Storage};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Notification sent when a local L2 write occurs (for replication dispatch).
@@ -23,6 +24,55 @@ pub struct WriteNotification {
     pub group_id: Option<String>,
     pub data: Vec<u8>,
     pub key_version: u32,
+    pub parent_id: Option<String>,
+    pub is_copy: bool,
+}
+
+/// Replication diagnostics counters -- shared between replication task and API.
+pub struct ReplicationStats {
+    /// Items pushed to peers (batched sends, counted per item).
+    pub items_pushed: AtomicU64,
+    /// Items received via anti-entropy sync.
+    pub items_synced: AtomicU64,
+    /// Items rejected on receive (integrity, membership, size).
+    pub items_rejected: AtomicU64,
+    /// Items received as duplicates (already stored).
+    pub items_duplicate: AtomicU64,
+    /// Push retries that exhausted all attempts.
+    pub push_retries_exhausted: AtomicU64,
+    /// Anti-entropy sync rounds completed.
+    pub sync_rounds: AtomicU64,
+    /// Anti-entropy sync rounds that found missing items.
+    pub sync_rounds_with_diff: AtomicU64,
+    /// Anti-entropy sync rounds that failed (no peer, error).
+    pub sync_errors: AtomicU64,
+    /// Items buffered in write coalescing buffer (set, not incremented).
+    pub write_buffer_depth: AtomicU64,
+    /// Pending push retries in queue (set, not incremented).
+    pub pending_push_count: AtomicU64,
+}
+
+impl ReplicationStats {
+    pub fn new() -> Self {
+        Self {
+            items_pushed: AtomicU64::new(0),
+            items_synced: AtomicU64::new(0),
+            items_rejected: AtomicU64::new(0),
+            items_duplicate: AtomicU64::new(0),
+            push_retries_exhausted: AtomicU64::new(0),
+            sync_rounds: AtomicU64::new(0),
+            sync_rounds_with_diff: AtomicU64::new(0),
+            sync_errors: AtomicU64::new(0),
+            write_buffer_depth: AtomicU64::new(0),
+            pending_push_count: AtomicU64::new(0),
+        }
+    }
+}
+
+impl Default for ReplicationStats {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Callback to get peer counts (warm, hot) from the node's peer pool.
@@ -62,6 +112,7 @@ pub struct AppState {
     pub shared_groups: Option<std::sync::Arc<tokio::sync::RwLock<Vec<String>>>>,
     pub peer_count_fn: Option<PeerCountFn>,
     pub peer_list_fn: Option<PeerListFn>,
+    pub replication_stats: Option<Arc<ReplicationStats>>,
 }
 
 /// Build the axum router.
@@ -83,6 +134,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/groups/update_posture", post(groups_update_posture))
         .route("/api/v1/status", post(status))
         .route("/api/v1/peers", post(peers))
+        .route("/api/v1/diagnostics", post(diagnostics))
         .with_state(state)
 }
 
@@ -347,10 +399,30 @@ async fn l2_write(
         return e.into_response();
     }
 
-    let data = serde_json::to_vec(&req.data).unwrap_or_default();
+    let data = match serde_json::to_vec(&req.data) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(
+                item_id = req.item_id,
+                error = %e,
+                "mem: l2 write failed to serialise data"
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("failed to serialise item data: {e}"),
+            )
+                .into_response();
+        }
+    };
 
     // Enforce item size limit (backpressure: reject before storage/replication)
     if data.len() > cordelia_protocol::MAX_ITEM_BYTES {
+        tracing::warn!(
+            item_id = req.item_id,
+            bytes = data.len(),
+            limit = cordelia_protocol::MAX_ITEM_BYTES,
+            "mem: l2 write rejected (too large)"
+        );
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             format!(
@@ -379,6 +451,14 @@ async fn l2_write(
 
     match state.storage.write_l2_item(&write) {
         Ok(()) => {
+            tracing::info!(
+                item_id = write.id,
+                item_type = write.item_type,
+                group = write.group_id.as_deref().unwrap_or("(private)"),
+                bytes = write.data.len(),
+                is_copy = write.is_copy,
+                "mem: l2 item written"
+            );
             // Notify replication task of the write
             if let Some(tx) = &state.write_notify {
                 let _ = tx.send(WriteNotification {
@@ -387,11 +467,16 @@ async fn l2_write(
                     group_id: write.group_id,
                     data: write.data,
                     key_version: write.key_version as u32,
+                    parent_id: write.parent_id,
+                    is_copy: write.is_copy,
                 });
             }
             Json(serde_json::json!({ "ok": true })).into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "mem: l2 write failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
     }
 }
 
@@ -406,6 +491,7 @@ async fn l2_delete(
 
     match state.storage.delete_l2_item(&req.item_id) {
         Ok(true) => {
+            tracing::info!(item_id = req.item_id, "mem: l2 item deleted");
             // TODO: trigger tombstone replication
             Json(serde_json::json!({ "ok": true })).into_response()
         }
@@ -469,11 +555,22 @@ async fn groups_create(
         .write_group(&req.group_id, &req.name, &req.culture, &req.security_policy)
     {
         Ok(()) => {
+            tracing::info!(
+                group_id = req.group_id,
+                name = req.name,
+                culture = req.culture,
+                "mem: group created"
+            );
             // Push new group into shared dynamic groups
             if let Some(shared) = &state.shared_groups {
                 let mut groups = shared.write().await;
                 if !groups.contains(&req.group_id) {
                     groups.push(req.group_id.clone());
+                    tracing::info!(
+                        group_id = req.group_id,
+                        total_groups = groups.len(),
+                        "mem: group added to shared_groups"
+                    );
                 }
             }
             Json(serde_json::json!({
@@ -482,7 +579,10 @@ async fn groups_create(
             }))
             .into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => {
+            tracing::warn!(group_id = req.group_id, error = %e, "mem: group create failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
     }
 }
 
@@ -552,10 +652,16 @@ async fn groups_delete(
 
     match state.storage.delete_group(&req.group_id) {
         Ok(true) => {
+            tracing::info!(group_id = req.group_id, "mem: group deleted");
             // Remove from shared dynamic groups
             if let Some(shared) = &state.shared_groups {
                 let mut groups = shared.write().await;
                 groups.retain(|g| g != &req.group_id);
+                tracing::info!(
+                    group_id = req.group_id,
+                    remaining_groups = groups.len(),
+                    "mem: group removed from shared_groups"
+                );
             }
 
             // Log access
@@ -601,6 +707,12 @@ async fn groups_add_member(
         .add_member(&req.group_id, &req.entity_id, &req.role)
     {
         Ok(()) => {
+            tracing::info!(
+                group_id = req.group_id,
+                entity_id = req.entity_id,
+                role = req.role,
+                "mem: member added to group"
+            );
             let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
                 entity_id: state.entity_id.clone(),
                 action: "add_member".into(),
@@ -627,6 +739,11 @@ async fn groups_remove_member(
 
     match state.storage.remove_member(&req.group_id, &req.entity_id) {
         Ok(true) => {
+            tracing::info!(
+                group_id = req.group_id,
+                entity_id = req.entity_id,
+                "mem: member removed from group"
+            );
             let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
                 entity_id: state.entity_id.clone(),
                 action: "remove_member".into(),
@@ -669,6 +786,12 @@ async fn groups_update_posture(
         .update_member_posture(&req.group_id, &req.entity_id, &req.posture)
     {
         Ok(true) => {
+            tracing::info!(
+                group_id = req.group_id,
+                entity_id = req.entity_id,
+                posture = req.posture,
+                "mem: member posture updated"
+            );
             let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
                 entity_id: state.entity_id.clone(),
                 action: "update_posture".into(),
@@ -739,5 +862,93 @@ async fn peers(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl I
     .into_response()
 }
 
+async fn diagnostics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let (warm, hot) = if let Some(f) = &state.peer_count_fn {
+        f().await
+    } else {
+        (0, 0)
+    };
+
+    let groups = if let Some(sg) = &state.shared_groups {
+        sg.read().await.clone()
+    } else {
+        vec![]
+    };
+
+    let repl = if let Some(stats) = &state.replication_stats {
+        serde_json::json!({
+            "items_pushed": stats.items_pushed.load(Ordering::Relaxed),
+            "items_synced": stats.items_synced.load(Ordering::Relaxed),
+            "items_rejected": stats.items_rejected.load(Ordering::Relaxed),
+            "items_duplicate": stats.items_duplicate.load(Ordering::Relaxed),
+            "push_retries_exhausted": stats.push_retries_exhausted.load(Ordering::Relaxed),
+            "sync_rounds": stats.sync_rounds.load(Ordering::Relaxed),
+            "sync_rounds_with_diff": stats.sync_rounds_with_diff.load(Ordering::Relaxed),
+            "sync_errors": stats.sync_errors.load(Ordering::Relaxed),
+            "write_buffer_depth": stats.write_buffer_depth.load(Ordering::Relaxed),
+            "pending_push_count": stats.pending_push_count.load(Ordering::Relaxed),
+        })
+    } else {
+        serde_json::json!("not available")
+    };
+
+    let mempool = match state.storage.storage_stats() {
+        Ok(stats) => {
+            let group_details: Vec<serde_json::Value> = stats.groups.iter().map(|g| {
+                serde_json::json!({
+                    "group_id": g.group_id,
+                    "items": g.item_count,
+                    "data_bytes": g.data_bytes,
+                    "members": g.member_count,
+                })
+            }).collect();
+            serde_json::json!({
+                "l2_items": stats.l2_item_count,
+                "l2_data_bytes": stats.l2_data_bytes,
+                "l2_data_human": format_bytes(stats.l2_data_bytes),
+                "groups": stats.group_count,
+                "group_details": group_details,
+            })
+        }
+        Err(e) => serde_json::json!({ "error": e.to_string() }),
+    };
+
+    Json(serde_json::json!({
+        "node_id": state.node_id,
+        "entity_id": state.entity_id,
+        "uptime_secs": state.start_time.elapsed().as_secs(),
+        "peers": {
+            "warm": warm,
+            "hot": hot,
+        },
+        "groups": groups,
+        "replication": repl,
+        "mempool": mempool,
+    }))
+    .into_response()
+}
+
 // Need base64 for l1_read fallback
 use base64::Engine;
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    const GB: u64 = 1024 * 1024 * 1024;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}

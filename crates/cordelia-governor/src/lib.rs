@@ -182,6 +182,11 @@ impl Governor {
         }
     }
 
+    /// Update this node's group membership (for dynamic group creation).
+    pub fn set_groups(&mut self, groups: Vec<GroupId>) {
+        self.our_groups = groups;
+    }
+
     /// Add or update a known peer.
     pub fn add_peer(&mut self, node_id: NodeId, addrs: Vec<Multiaddr>, groups: Vec<GroupId>) {
         self.peers
@@ -215,6 +220,11 @@ impl Governor {
     pub fn mark_connected(&mut self, node_id: &NodeId) {
         if let Some(peer) = self.peers.get_mut(node_id) {
             if peer.state == PeerState::Cold {
+                tracing::debug!(
+                    peer = %node_id,
+                    disconnect_count = peer.disconnect_count,
+                    "gov: cold -> warm (connected)"
+                );
                 peer.state = PeerState::Warm;
                 peer.connected_since = Some(Instant::now());
                 peer.last_activity = Instant::now();
@@ -228,10 +238,19 @@ impl Governor {
     pub fn mark_disconnected(&mut self, node_id: &NodeId) {
         if let Some(peer) = self.peers.get_mut(node_id) {
             if peer.state.is_active() {
+                let from = peer.state.name();
                 peer.state = PeerState::Cold;
                 peer.connected_since = None;
                 peer.disconnect_count += 1;
                 peer.last_disconnected = Some(Instant::now());
+                let backoff = Self::reconnect_backoff(peer.disconnect_count);
+                tracing::info!(
+                    peer = %node_id,
+                    from,
+                    disconnect_count = peer.disconnect_count,
+                    backoff_secs = backoff.as_secs(),
+                    "gov: peer disconnected, backoff active"
+                );
             }
         }
     }
@@ -242,6 +261,13 @@ impl Governor {
         if let Some(peer) = self.peers.get_mut(node_id) {
             peer.disconnect_count += 1;
             peer.last_disconnected = Some(Instant::now());
+            let backoff = Self::reconnect_backoff(peer.disconnect_count);
+            tracing::debug!(
+                peer = %node_id,
+                disconnect_count = peer.disconnect_count,
+                backoff_secs = backoff.as_secs(),
+                "gov: dial failed, backoff updated"
+            );
         }
     }
 
@@ -276,11 +302,20 @@ impl Governor {
     /// Ban a peer for protocol violation.
     pub fn ban_peer(&mut self, node_id: &NodeId, reason: String) {
         if let Some(peer) = self.peers.get_mut(node_id) {
+            let from = peer.state.name();
             let escalation = match &peer.state {
                 PeerState::Banned { escalation, .. } => escalation + 1,
                 _ => 1,
             };
             let duration = DEFAULT_BAN_DURATION * escalation;
+            tracing::warn!(
+                peer = %node_id,
+                from,
+                reason = reason,
+                escalation,
+                ban_duration_secs = duration.as_secs(),
+                "gov: peer banned"
+            );
             peer.state = PeerState::Banned {
                 until: Instant::now() + duration,
                 reason,
@@ -372,8 +407,14 @@ impl Governor {
     fn unban_expired(&mut self, actions: &mut GovernorActions) {
         let now = Instant::now();
         for peer in self.peers.values_mut() {
-            if let PeerState::Banned { until, .. } = &peer.state {
+            if let PeerState::Banned { until, reason, escalation } = &peer.state {
                 if now >= *until {
+                    tracing::info!(
+                        peer = %peer.node_id,
+                        reason = reason.as_str(),
+                        escalation,
+                        "gov: ban expired, returning to cold"
+                    );
                     let from = peer.state.name().to_string();
                     peer.state = PeerState::Cold;
                     actions
@@ -396,14 +437,25 @@ impl Governor {
         for id in dead_ids {
             if let Some(peer) = self.peers.get_mut(&id) {
                 let from = peer.state.name().to_string();
+                let inactive_secs = now.duration_since(peer.last_activity).as_secs();
                 match peer.state {
                     PeerState::Hot => {
+                        tracing::info!(
+                            peer = %id,
+                            inactive_secs,
+                            "gov: reaping dead hot peer -> warm"
+                        );
                         peer.state = PeerState::Warm;
                         peer.connected_since = None;
                         peer.demoted_at = Some(Instant::now());
                         actions.transitions.push((id, from, "warm".into()));
                     }
                     PeerState::Warm => {
+                        tracing::info!(
+                            peer = %id,
+                            inactive_secs,
+                            "gov: reaping dead warm peer -> cold (disconnect)"
+                        );
                         peer.state = PeerState::Cold;
                         peer.connected_since = None;
                         actions.disconnect.push(id);
@@ -416,12 +468,19 @@ impl Governor {
     }
 
     fn promote_cold_to_warm(&mut self, actions: &mut GovernorActions) {
-        let (_, warm, _, _) = self.counts();
+        let (_, warm, cold, _) = self.counts();
         if warm >= self.targets.warm_min {
             return;
         }
 
         let needed = self.targets.warm_min - warm;
+        tracing::debug!(
+            warm,
+            warm_min = self.targets.warm_min,
+            needed,
+            cold_available = cold,
+            "gov: need more warm peers"
+        );
         let now = Instant::now();
         let mut candidates: Vec<NodeId> = self
             .peers
@@ -460,6 +519,26 @@ impl Governor {
                 .collect();
         }
 
+        if !candidates.is_empty() {
+            // Log skipped peers for backoff visibility
+            let in_backoff: usize = self
+                .peers
+                .values()
+                .filter(|p| {
+                    matches!(p.state, PeerState::Cold)
+                        && self.is_dialable(p)
+                        && p.last_disconnected.is_some_and(|t| {
+                            now.duration_since(t) < Self::reconnect_backoff(p.disconnect_count)
+                        })
+                })
+                .count();
+            if in_backoff > 0 {
+                tracing::debug!(
+                    in_backoff,
+                    "gov: cold peers skipped due to reconnect backoff"
+                );
+            }
+        }
         for id in candidates {
             actions.connect.push(id);
             // Note: actual state transition happens when mark_connected() is called
@@ -494,7 +573,14 @@ impl Governor {
             if let Some(warm) = best_warm {
                 if hot < self.targets.hot_max && warm.score() > worst_hot_score {
                     let id = warm.node_id;
+                    let warm_score = warm.score();
                     if let Some(peer) = self.peers.get_mut(&id) {
+                        tracing::info!(
+                            peer = %id,
+                            score = format!("{warm_score:.4}"),
+                            worst_hot = format!("{worst_hot_score:.4}"),
+                            "gov: warm -> hot (outperforms worst hot)"
+                        );
                         peer.state = PeerState::Hot;
                         peer.disconnect_count = 0; // stable connection, reset backoff
                         actions.transitions.push((id, "warm".into(), "hot".into()));
@@ -518,8 +604,13 @@ impl Governor {
 
         warm_peers.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        for (id, _) in warm_peers.into_iter().take(needed) {
+        for (id, score) in warm_peers.into_iter().take(needed) {
             if let Some(peer) = self.peers.get_mut(&id) {
+                tracing::info!(
+                    peer = %id,
+                    score = format!("{score:.4}"),
+                    "gov: warm -> hot (filling hot_min)"
+                );
                 peer.state = PeerState::Hot;
                 peer.disconnect_count = 0; // stable connection, reset backoff
                 actions.transitions.push((id, "warm".into(), "hot".into()));
@@ -552,8 +643,14 @@ impl Governor {
                 .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
         });
 
-        for (id, _, _) in hot_peers.into_iter().take(excess) {
+        for (id, score, is_stale) in hot_peers.into_iter().take(excess) {
             if let Some(peer) = self.peers.get_mut(&id) {
+                tracing::info!(
+                    peer = %id,
+                    score = format!("{score:.4}"),
+                    is_stale,
+                    "gov: hot -> warm (excess demotion)"
+                );
                 peer.state = PeerState::Warm;
                 actions.transitions.push((id, "hot".into(), "warm".into()));
             }
@@ -573,6 +670,13 @@ impl Governor {
             return;
         }
 
+        tracing::info!(
+            warm,
+            cold,
+            churn_count,
+            "gov: periodic churn cycle"
+        );
+
         // Demote random warm → cold
         let warm_ids: Vec<NodeId> = self
             .peers
@@ -584,6 +688,7 @@ impl Governor {
 
         for id in &warm_ids {
             if let Some(peer) = self.peers.get_mut(id) {
+                tracing::debug!(peer = %id, "gov: churn warm -> cold");
                 peer.state = PeerState::Cold;
                 peer.connected_since = None;
                 actions.disconnect.push(*id);
@@ -615,6 +720,12 @@ impl Governor {
 
         // Remove oldest cold peers
         let excess = cold - self.targets.cold_max;
+        tracing::debug!(
+            cold,
+            cold_max = self.targets.cold_max,
+            evicting = excess,
+            "gov: evicting excess cold peers"
+        );
         let mut cold_peers: Vec<(NodeId, Instant)> = self
             .peers
             .values()
@@ -625,6 +736,7 @@ impl Governor {
         cold_peers.sort_by_key(|(_, t)| *t);
 
         for (id, _) in cold_peers.into_iter().take(excess) {
+            tracing::trace!(peer = %id, "gov: evicted cold peer");
             self.peers.remove(&id);
         }
     }
