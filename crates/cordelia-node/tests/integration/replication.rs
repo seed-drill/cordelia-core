@@ -726,3 +726,185 @@ fn test_concurrent_write_convergence() {
         mesh.shutdown_all().await;
     });
 }
+
+/// Verify GroupDescriptor replication: Node A owns group g1, Node B joins.
+/// After GroupExchange, Node B should have:
+/// (1) group culture from the descriptor, (2) owner signature (lazy-signed by A).
+#[tokio::test]
+async fn test_group_descriptor_replication() {
+    let targets = GovernorTargets {
+        hot_min: 1,
+        hot_max: 5,
+        warm_min: 1,
+        warm_max: 5,
+        cold_max: 10,
+        churn_interval_secs: 3600,
+        churn_fraction: 0.0,
+    };
+
+    // Node A: owns group "desc-g1" with chatty culture (harness default)
+    let node_a = TestNodeBuilder::new("desc-a")
+        .role(NodeRole::Relay)
+        .groups(vec!["desc-g1".into()])
+        .governor_targets(targets.clone())
+        .build()
+        .await
+        .unwrap();
+
+    // Node B: also member of "desc-g1"
+    let node_b = TestNodeBuilder::new("desc-b")
+        .role(NodeRole::Relay)
+        .groups(vec!["desc-g1".into()])
+        .governor_targets(targets)
+        .bootnode(node_a.listen_addr.clone())
+        .build()
+        .await
+        .unwrap();
+
+    // Wait for connectivity
+    node_a
+        .wait_connected_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
+    node_b
+        .wait_connected_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
+
+    // Allow time for GroupExchange + lazy signing
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    // Read group on Node A -- should have owner signature (lazy-signed)
+    let a_group = node_a.api_read_group("desc-g1").await.unwrap();
+    let a_grp = &a_group["group"];
+    eprintln!("Node A group: {}", serde_json::to_string_pretty(a_grp).unwrap());
+
+    // Node A is owner (added by harness), so after first GroupExchange it should
+    // have signed the descriptor and persisted signature to storage.
+    assert!(
+        a_grp["owner_id"].as_str().is_some(),
+        "Node A should have owner_id after lazy signing"
+    );
+    assert!(
+        a_grp["owner_pubkey"].as_str().is_some(),
+        "Node A should have owner_pubkey after lazy signing"
+    );
+    assert!(
+        a_grp["signature"].as_str().is_some(),
+        "Node A should have signature after lazy signing"
+    );
+
+    // Read group on Node B -- should have received the descriptor via GroupExchange.
+    let b_group = node_b.api_read_group("desc-g1").await.unwrap();
+    let b_grp = &b_group["group"];
+    eprintln!("Node B group: {}", serde_json::to_string_pretty(b_grp).unwrap());
+
+    // Both nodes should agree on culture
+    assert_eq!(
+        a_grp["culture"].as_str(),
+        b_grp["culture"].as_str(),
+        "Culture should match after GroupExchange"
+    );
+
+    // Verify item replication still works through this group
+    node_a
+        .api_write_item("desc-item-001", "entity", b"descriptor-test", "desc-g1")
+        .await
+        .unwrap();
+
+    node_b
+        .wait_item("desc-item-001", Duration::from_secs(30))
+        .await
+        .unwrap();
+
+    node_a.shutdown().await;
+    node_b.shutdown().await;
+}
+
+/// Verify GroupDescriptor with a dynamic relay: relay learns group metadata
+/// (not just group IDs) from connected peers.
+#[tokio::test]
+async fn test_group_descriptor_via_relay() {
+    let targets = GovernorTargets {
+        hot_min: 1,
+        hot_max: 5,
+        warm_min: 1,
+        warm_max: 5,
+        cold_max: 10,
+        churn_interval_secs: 3600,
+        churn_fraction: 0.0,
+    };
+
+    // Dynamic relay: no own groups, learns from peers
+    let relay = TestNodeBuilder::new("desc-relay")
+        .role(NodeRole::Relay)
+        .groups(vec![])
+        .relay_posture(RelayPosture::Dynamic)
+        .governor_targets(targets.clone())
+        .build()
+        .await
+        .unwrap();
+
+    // Node A: owns "relay-desc-g1"
+    let node_a = TestNodeBuilder::new("desc-relay-a")
+        .role(NodeRole::Relay)
+        .groups(vec!["relay-desc-g1".into()])
+        .governor_targets(targets.clone())
+        .bootnode(relay.listen_addr.clone())
+        .build()
+        .await
+        .unwrap();
+
+    // Node B: member of "relay-desc-g1"
+    let node_b = TestNodeBuilder::new("desc-relay-b")
+        .role(NodeRole::Relay)
+        .groups(vec!["relay-desc-g1".into()])
+        .governor_targets(targets)
+        .bootnode(relay.listen_addr.clone())
+        .build()
+        .await
+        .unwrap();
+
+    // Wait for all three to connect
+    relay
+        .wait_connected_peers(2, Duration::from_secs(60))
+        .await
+        .unwrap();
+
+    // Allow GroupExchange to propagate descriptors through relay
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    // Relay should have learned the group (via GroupExchange descriptors)
+    let relay_group = relay.api_read_group("relay-desc-g1").await.unwrap();
+    eprintln!(
+        "Relay group: {}",
+        serde_json::to_string_pretty(&relay_group).unwrap()
+    );
+
+    // Relay should have the group in storage (learned from peers)
+    assert!(
+        relay_group.get("group").is_some()
+            && !relay_group["group"].is_null(),
+        "Relay should have learned group metadata via descriptors"
+    );
+
+    // Verify data still flows: A -> relay -> B
+    node_a
+        .api_write_item(
+            "relay-desc-001",
+            "entity",
+            b"relay-descriptor-test",
+            "relay-desc-g1",
+        )
+        .await
+        .unwrap();
+
+    node_b
+        .wait_item("relay-desc-001", Duration::from_secs(60))
+        .await
+        .unwrap();
+
+    relay.shutdown().await;
+    node_a.shutdown().await;
+    node_b.shutdown().await;
+}

@@ -215,6 +215,12 @@ impl TestNode {
         self.api_post("/api/v1/groups/create", body).await
     }
 
+    /// Read a group by ID (returns group + members).
+    pub async fn api_read_group(&self, group_id: &str) -> anyhow::Result<serde_json::Value> {
+        let body = serde_json::json!({ "group_id": group_id });
+        self.api_post("/api/v1/groups/read", body).await
+    }
+
     /// Raw POST returning (status_code, body_json).
     pub async fn api_post_raw(
         &self,
@@ -342,9 +348,13 @@ impl TestNodeBuilder {
         let storage: Arc<dyn cordelia_storage::Storage> =
             Arc::new(SqliteStorage::create_new(&db_path)?);
 
-        // Create groups in storage
+        // Seed L1 entry for this node's entity (needed for group_members FK)
+        storage.write_l1(&self.name, b"{}")?;
+
+        // Create groups in storage and add self as owner
         for group_id in &self.groups {
             storage.write_group(group_id, group_id, "chatty", "standard")?;
+            storage.add_member(group_id, &self.name, "owner")?;
         }
         let shared_groups = Arc::new(RwLock::new(self.groups.clone()));
 
