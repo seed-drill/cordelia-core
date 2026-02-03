@@ -1,3 +1,5 @@
+<p><img src="docs/logo.svg" alt="Cordelia" width="48" height="42"></p>
+
 # Cordelia Core
 
 [![CI](https://github.com/seed-drill/cordelia-core/actions/workflows/ci.yml/badge.svg)](https://github.com/seed-drill/cordelia-core/actions/workflows/ci.yml)
