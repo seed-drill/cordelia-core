@@ -501,8 +501,7 @@ EOF
     volumes:
       - portal-data:/data
     environment:
-      - CORDELIA_CORE_API=http://keeper-seeddrill-1:9473
-      - CORDELIA_NODE_TOKEN=${BEARER_TOKEN}
+      - CORDELIA_PROXY_URL=http://proxy:3847
       - PROXY_API_URL=http://proxy:3847
       - PORTAL_BASE_URL=${PORTAL_BASE_URL}
       - PORTAL_PORT=3001

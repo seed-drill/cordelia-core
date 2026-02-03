@@ -1,0 +1,223 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36" version="29.3.6">
+  <diagram name="Cordelia Architecture" id="cordelia-aod-v2">
+    <mxGraphModel dx="2037" dy="1073" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;" value="&lt;b style=&quot;font-size:16px&quot;&gt;Cordelia Architecture Overview&lt;/b&gt;&lt;br&gt;&lt;i&gt;Entity-sovereign memory protocol&lt;/i&gt;" vertex="1">
+          <mxGeometry height="50" width="400" x="480" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="entity-box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;dashed=1;dashPattern=8 8;" value="" vertex="1">
+          <mxGeometry height="180" width="340" x="60" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="entity-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;" value="&lt;b&gt;ENTITY&lt;/b&gt; (Human + AI)" vertex="1">
+          <mxGeometry height="20" width="200" x="70" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="actor" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;" value="Entity" vertex="1">
+          <mxGeometry height="55" width="40" x="105" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" value="&lt;b&gt;LLM&lt;/b&gt;&lt;br&gt;Claude / GPT / Gemini&lt;br&gt;Any MCP-capable model" vertex="1">
+          <mxGeometry height="65" width="170" x="200" y="115" as="geometry" />
+        </mxCell>
+        <mxCell id="actor-llm" edge="1" parent="1" source="actor" style="endArrow=classic;startArrow=classic;html=1;" target="llm" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ma-note" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;" value="&lt;i&gt;Model-agnostic&lt;/i&gt;" vertex="1">
+          <mxGeometry height="15" width="120" x="220" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="proxy-box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="" vertex="1">
+          <mxGeometry height="260" width="340" x="60" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="proxy-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;" value="&lt;b&gt;@cordelia/proxy&lt;/b&gt; (TypeScript) -- Martin WP1" vertex="1">
+          <mxGeometry height="20" width="300" x="70" y="335" as="geometry" />
+        </mxCell>
+        <mxCell id="mcp-tools" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" value="&lt;b&gt;MCP Tools&lt;/b&gt;&lt;br&gt;25 tools (stdio)&lt;br&gt;read / write / search&lt;br&gt;share / group / backup" vertex="1">
+          <mxGeometry height="65" width="145" x="75" y="365" as="geometry" />
+        </mxCell>
+        <mxCell id="l0-cache" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" value="&lt;b&gt;L0 Cache&lt;/b&gt;&lt;br&gt;In-memory&lt;br&gt;L1 hot + recent L2" vertex="1">
+          <mxGeometry height="65" width="145" x="235" y="365" as="geometry" />
+        </mxCell>
+        <mxCell id="novelty" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" value="&lt;b&gt;Novelty Engine&lt;/b&gt;&lt;br&gt;Pattern matching + scoring" vertex="1">
+          <mxGeometry height="45" width="145" x="75" y="445" as="geometry" />
+        </mxCell>
+        <mxCell id="embedding" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" value="&lt;b&gt;Embedding&lt;/b&gt;&lt;br&gt;Vector generation (Ollama)" vertex="1">
+          <mxGeometry height="45" width="145" x="235" y="445" as="geometry" />
+        </mxCell>
+        <mxCell id="crypto-boundary" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;fontStyle=1;" value="&lt;b&gt;ENCRYPTION BOUNDARY&lt;/b&gt; -- AES-256-GCM -- Entity holds keys here. Node never sees plaintext." vertex="1">
+          <mxGeometry height="40" width="305" x="75" y="505" as="geometry" />
+        </mxCell>
+        <mxCell id="stdio" edge="1" parent="1" source="entity-box" style="endArrow=classic;startArrow=classic;html=1;fontSize=9;" target="proxy-box" value="&lt;b&gt;stdio&lt;/b&gt; (MCP / JSON-RPC)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="node-box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="" vertex="1">
+          <mxGeometry height="340" width="340" x="60" y="670" as="geometry" />
+        </mxCell>
+        <mxCell id="node-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;" value="&lt;b&gt;cordelia-node&lt;/b&gt; (Rust) -- Same binary, all roles" vertex="1">
+          <mxGeometry height="20" width="310" x="70" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="api" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" value="&lt;b&gt;cordelia-api&lt;/b&gt; (Axum) -- 11 endpoints, bearer auth" vertex="1">
+          <mxGeometry height="35" width="305" x="75" y="705" as="geometry" />
+        </mxCell>
+        <mxCell id="governor" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" value="&lt;b&gt;Governor&lt;/b&gt;&lt;br&gt;cold/warm/hot/banned&lt;br&gt;Churn + backoff" vertex="1">
+          <mxGeometry height="55" width="145" x="75" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="replication" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" value="&lt;b&gt;Replication&lt;/b&gt;&lt;br&gt;Culture-governed&lt;br&gt;Anti-entropy sync" vertex="1">
+          <mxGeometry height="55" width="145" x="235" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="quic" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" value="&lt;b&gt;QUIC Transport&lt;/b&gt; (quinn, UDP 9474)&lt;br&gt;5 mini-protocols: handshake, keepalive, peer-share, memory-sync, memory-fetch" vertex="1">
+          <mxGeometry height="45" width="305" x="75" y="815" as="geometry" />
+        </mxCell>
+        <mxCell id="storage-crate" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" value="&lt;b&gt;cordelia-storage&lt;/b&gt;&lt;br&gt;SQLite WAL, schema v4&lt;br&gt;Encrypted blobs + vectors" vertex="1">
+          <mxGeometry height="50" width="180" x="75" y="870" as="geometry" />
+        </mxCell>
+        <mxCell id="crypto-crate" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" value="&lt;b&gt;cordelia-crypto&lt;/b&gt;&lt;br&gt;AES-256-GCM, Ed25519&lt;br&gt;scrypt KDF" vertex="1">
+          <mxGeometry height="50" width="115" x="265" y="870" as="geometry" />
+        </mxCell>
+        <mxCell id="protocol-crate" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" value="&lt;b&gt;cordelia-protocol&lt;/b&gt; (wire types, codec)" vertex="1">
+          <mxGeometry height="25" width="305" x="75" y="930" as="geometry" />
+        </mxCell>
+        <mxCell id="http" edge="1" parent="1" source="proxy-box" style="endArrow=classic;startArrow=classic;html=1;fontSize=9;" target="node-box" value="&lt;b&gt;HTTP REST&lt;/b&gt; (localhost:9473, bearer token)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="sqlite-box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;dashed=1;dashPattern=8 8;" value="" vertex="1">
+          <mxGeometry height="340" width="260" x="470" y="670" as="geometry" />
+        </mxCell>
+        <mxCell id="sqlite-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" value="&lt;b&gt;SQLite&lt;/b&gt; (single file, WAL mode, schema v4)" vertex="1">
+          <mxGeometry height="20" width="240" x="480" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="t-l1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;l1_hot&lt;/b&gt; -- entity identity (~50KB)" vertex="1">
+          <mxGeometry height="25" width="240" x="480" y="700" as="geometry" />
+        </mxCell>
+        <mxCell id="t-l2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;l2_items&lt;/b&gt; -- all memories (GUID PK)&lt;br&gt;encrypted blob, group_id, author_id,&lt;br&gt;parent_id (COW), access_count, checksum" vertex="1">
+          <mxGeometry height="55" width="240" x="480" y="735" as="geometry" />
+        </mxCell>
+        <mxCell id="t-fts" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;l2_fts&lt;/b&gt; -- FTS5 (BM25, porter)" vertex="1">
+          <mxGeometry height="22" width="240" x="480" y="800" as="geometry" />
+        </mxCell>
+        <mxCell id="t-emb" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;embedding_cache&lt;/b&gt; -- hash to vector" vertex="1">
+          <mxGeometry height="22" width="240" x="480" y="832" as="geometry" />
+        </mxCell>
+        <mxCell id="t-grp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;groups&lt;/b&gt; + &lt;b&gt;group_members&lt;/b&gt;&lt;br&gt;culture (JSON), security_policy&lt;br&gt;roles: owner/admin/member/viewer" vertex="1">
+          <mxGeometry height="50" width="240" x="480" y="864" as="geometry" />
+        </mxCell>
+        <mxCell id="t-audit" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;access_log&lt;/b&gt; + &lt;b&gt;audit&lt;/b&gt; + &lt;b&gt;integrity_canary&lt;/b&gt;" vertex="1">
+          <mxGeometry height="22" width="240" x="480" y="924" as="geometry" />
+        </mxCell>
+        <mxCell id="t-schema" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;schema_version&lt;/b&gt; -- migration tracking" vertex="1">
+          <mxGeometry height="22" width="240" x="480" y="956" as="geometry" />
+        </mxCell>
+        <mxCell id="node-sqlite" edge="1" parent="1" source="node-box" style="endArrow=classic;startArrow=classic;html=1;" target="sqlite-box" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="net-box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;dashed=1;dashPattern=8 8;" value="" vertex="1">
+          <mxGeometry height="500" width="680" x="810" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="net-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" value="&lt;b&gt;P2P NETWORK&lt;/b&gt; (QUIC, UDP 9474)" vertex="1">
+          <mxGeometry height="25" width="300" x="820" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="peer-b" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" value="&lt;b&gt;Peer Node B&lt;/b&gt;&lt;br&gt;(another entity)" vertex="1">
+          <mxGeometry height="55" width="170" x="850" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="peer-c" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" value="&lt;b&gt;Peer Node C&lt;/b&gt;&lt;br&gt;(another entity)" vertex="1">
+          <mxGeometry height="55" width="170" x="950" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="bootnode" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" value="&lt;b&gt;Bootnode&lt;/b&gt;&lt;br&gt;boot1.cordelia.seeddrill.ai:9474&lt;br&gt;Always-on, same binary" vertex="1">
+          <mxGeometry height="55" width="250" x="1140" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="relay" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" value="&lt;b&gt;Edge Relay&lt;/b&gt;&lt;br&gt;Bridges internal / public groups&lt;br&gt;Member of both" vertex="1">
+          <mxGeometry height="55" width="250" x="1140" y="205" as="geometry" />
+        </mxCell>
+        <mxCell id="keeper" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;" value="&lt;b&gt;Secret Keeper&lt;/b&gt; (R4)&lt;br&gt;Shamir shard storage&lt;br&gt;n-of-m reincarnation&lt;br&gt;Cannot read shards" vertex="1">
+          <mxGeometry height="70" width="170" x="850" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="archive" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;" value="&lt;b&gt;Archive&lt;/b&gt; (R4)&lt;br&gt;L3 cold store, full history&lt;br&gt;Never expires TTL&lt;br&gt;Durable backend (S3)" vertex="1">
+          <mxGeometry height="70" width="250" x="1140" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="sd-note" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;" value="&lt;i&gt;Seed Drill = first commercial provider&lt;br&gt;of keeper + archive services&lt;/i&gt;" vertex="1">
+          <mxGeometry height="30" width="220" x="960" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="binary-note" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#666666;" value="&lt;b&gt;All roles = same Rust binary&lt;/b&gt;&lt;br&gt;Differentiated by [capabilities] config" vertex="1">
+          <mxGeometry height="30" width="220" x="960" y="440" as="geometry" />
+        </mxCell>
+        <mxCell id="pc1" edge="1" parent="1" source="peer-b" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;dashed=1;" target="bootnode" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pc2" edge="1" parent="1" source="peer-c" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;dashed=1;" target="relay" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pc3" edge="1" parent="1" source="peer-b" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;dashed=1;" target="peer-c" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pc4" edge="1" parent="1" source="bootnode" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;dashed=1;" target="relay" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pc5" edge="1" parent="1" source="peer-b" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;dashed=1;" target="keeper" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pc6" edge="1" parent="1" source="relay" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;dashed=1;" target="archive" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="node-net" edge="1" parent="1" source="node-box" style="endArrow=classic;startArrow=classic;html=1;fontSize=9;strokeColor=#6c8ebf;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.85;entryDx=0;entryDy=0;" target="net-box" value="&lt;b&gt;QUIC&lt;/b&gt; (UDP 9474)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="prim-box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;dashPattern=8 8;" value="" vertex="1">
+          <mxGeometry height="370" width="680" x="810" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="prim-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;" value="&lt;b&gt;CORDELIA PRIMITIVES&lt;/b&gt; (5 primitives, 9 rules)" vertex="1">
+          <mxGeometry height="20" width="300" x="820" y="645" as="geometry" />
+        </mxCell>
+        <mxCell id="p-entity" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;Entity&lt;/b&gt;&lt;br&gt;Human, AI, or hybrid. Sovereign.&lt;br&gt;Holds own keys.&lt;br&gt;Storage: &lt;b&gt;l1_hot&lt;/b&gt; + &lt;b&gt;l2_items&lt;/b&gt; type=&#39;entity&#39;" vertex="1">
+          <mxGeometry height="70" width="210" x="830" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="p-memory" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;Memory&lt;/b&gt;&lt;br&gt;Entity, session, or learning.&lt;br&gt;Encrypted blob + vector.&lt;br&gt;Immutable author provenance.&lt;br&gt;Storage: &lt;b&gt;l2_items&lt;/b&gt; (COW via parent_id)" vertex="1">
+          <mxGeometry height="70" width="210" x="1060" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="p-group" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;Group&lt;/b&gt;&lt;br&gt;Universal sharing primitive.&lt;br&gt;group_id = SHA-256(URI).&lt;br&gt;Storage: &lt;b&gt;groups&lt;/b&gt; + &lt;b&gt;group_members&lt;/b&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="830" y="760" as="geometry" />
+        </mxCell>
+        <mxCell id="p-culture" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;Culture&lt;/b&gt;&lt;br&gt;Per-group replication policy.&lt;br&gt;chatty (eager push) / moderate&lt;br&gt;(notify+fetch) / taciturn (TTL)&lt;br&gt;Storage: &lt;b&gt;groups.culture&lt;/b&gt; (JSON)" vertex="1">
+          <mxGeometry height="65" width="210" x="1060" y="760" as="geometry" />
+        </mxCell>
+        <mxCell id="p-trust" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;align=left;spacingLeft=6;" value="&lt;b&gt;Trust&lt;/b&gt; -- Empirical, not reputational. tau_ij(t) = accuracy over window W.&lt;br&gt;Entity sovereignty: accept(m) iff tau &amp;gt;= theta. Derived from &lt;b&gt;access_log&lt;/b&gt; + accuracy. Not stored directly." vertex="1">
+          <mxGeometry height="50" width="440" x="830" y="840" as="geometry" />
+        </mxCell>
+        <mxCell id="rules" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=9;whiteSpace=wrap;" value="&lt;b&gt;Rules:&lt;/b&gt; 1. Entity sovereignty 2. Private by default 3. Groups are universal 4. Encrypt before storage 5. Memory is identity 6. Trust is local 7. Novelty over volume 8. Model-agnostic 9. Protocol upgrade via access-weighted voting" vertex="1">
+          <mxGeometry height="45" width="440" x="830" y="905" as="geometry" />
+        </mxCell>
+        <mxCell id="eq-note" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=9;whiteSpace=wrap;" value="&lt;b&gt;Cooperative equilibrium:&lt;/b&gt; Honest cooperation is the dominant strategy (Nash equilibrium).&lt;br&gt;No token needed. Linux model, not cryptocurrency. See cooperative-equilibrium-proof.md" vertex="1">
+          <mxGeometry height="35" width="440" x="830" y="955" as="geometry" />
+        </mxCell>
+        <mxCell id="portal-box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" value="&lt;b&gt;cordelia-portal&lt;/b&gt;&lt;br&gt;Auth, enrollment, vault&lt;br&gt;Device management&lt;br&gt;Groups UI (via proxy)" vertex="1">
+          <mxGeometry height="70" width="180" x="470" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="portal-proxy" edge="1" parent="1" source="portal-box" style="endArrow=classic;startArrow=classic;html=1;fontSize=9;" target="proxy-box" value="&lt;b&gt;HTTP REST&lt;/b&gt; (localhost:3847)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ck-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=9;" value="&lt;b&gt;Key:&lt;/b&gt;" vertex="1">
+          <mxGeometry height="15" width="30" x="470" y="448" as="geometry" />
+        </mxCell>
+        <mxCell id="ck1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=8;" value="Entity/LLM" vertex="1">
+          <mxGeometry height="18" width="65" x="505" y="445" as="geometry" />
+        </mxCell>
+        <mxCell id="ck2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=8;" value="Proxy (TS)" vertex="1">
+          <mxGeometry height="18" width="65" x="575" y="445" as="geometry" />
+        </mxCell>
+        <mxCell id="ck3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=8;" value="Node (Rust)" vertex="1">
+          <mxGeometry height="18" width="65" x="645" y="445" as="geometry" />
+        </mxCell>
+        <mxCell id="ck4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=8;" value="Storage" vertex="1">
+          <mxGeometry height="18" width="65" x="505" y="468" as="geometry" />
+        </mxCell>
+        <mxCell id="ck5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=8;" value="Network" vertex="1">
+          <mxGeometry height="18" width="65" x="575" y="468" as="geometry" />
+        </mxCell>
+        <mxCell id="ck6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=8;" value="R4 (future)" vertex="1">
+          <mxGeometry height="18" width="65" x="645" y="468" as="geometry" />
+        </mxCell>
+        <mxCell id="ck7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=8;" value="Portal" vertex="1">
+          <mxGeometry height="18" width="65" x="715" y="445" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
