@@ -51,6 +51,9 @@ _save_PORTAL_BASE_URL="${PORTAL_BASE_URL-}"
 _save_SESSION_SECRET="${SESSION_SECRET-}"
 _save_GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID-}"
 _save_GITHUB_CLIENT_SECRET="${GITHUB_CLIENT_SECRET-}"
+_save_PORTAL_URL="${PORTAL_URL-}"
+_save_GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID-}"
+_save_GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET-}"
 
 if [ -f "$DIR/topology.env" ]; then
     set -a
@@ -83,6 +86,9 @@ fi
 [ -n "$_save_SESSION_SECRET" ] && SESSION_SECRET="$_save_SESSION_SECRET"
 [ -n "$_save_GITHUB_CLIENT_ID" ] && GITHUB_CLIENT_ID="$_save_GITHUB_CLIENT_ID"
 [ -n "$_save_GITHUB_CLIENT_SECRET" ] && GITHUB_CLIENT_SECRET="$_save_GITHUB_CLIENT_SECRET"
+[ -n "$_save_PORTAL_URL" ] && PORTAL_URL="$_save_PORTAL_URL"
+[ -n "$_save_GOOGLE_CLIENT_ID" ] && GOOGLE_CLIENT_ID="$_save_GOOGLE_CLIENT_ID"
+[ -n "$_save_GOOGLE_CLIENT_SECRET" ] && GOOGLE_CLIENT_SECRET="$_save_GOOGLE_CLIENT_SECRET"
 
 # Apply hardcoded defaults for anything still unset
 BACKBONE_COUNT="${BACKBONE_COUNT:-3}"
@@ -109,6 +115,9 @@ PORTAL_BASE_URL="${PORTAL_BASE_URL:-http://localhost:${PORTAL_PORT}}"
 SESSION_SECRET="${SESSION_SECRET:-e2e-test-session-secret}"
 GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID:-}"
 GITHUB_CLIENT_SECRET="${GITHUB_CLIENT_SECRET:-}"
+PORTAL_URL="${PORTAL_URL:-http://portal:${PORTAL_PORT}}"
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
 
 mkdir -p "$OUT_DIR"
 
@@ -465,6 +474,7 @@ addr = \"edge-seeddrill-2:9474\""
       - CORDELIA_LOCAL_USERS=admin:admin
       - CORDELIA_HTTP_PORT=3847
       - CORDELIA_EMBEDDING_PROVIDER=none
+      - PORTAL_URL=${PORTAL_URL}
       - NODE_ENV=production
     depends_on:
       keeper-seeddrill-1:
@@ -500,6 +510,8 @@ EOF
       - SESSION_SECRET=${SESSION_SECRET}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - NODE_ENV=production
     depends_on:
       keeper-seeddrill-1:
