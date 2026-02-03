@@ -170,6 +170,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let keypair = identity
         .to_libp2p_keypair()
         .map_err(|e| anyhow::anyhow!("failed to create libp2p keypair: {e}"))?;
+    let identity = Arc::new(identity);
 
     tracing::info!(
         peer_id = %our_peer_id,
@@ -374,6 +375,8 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         let shutdown = shutdown_tx.subscribe();
         let relay_accepted = relay_accepted_groups.clone();
         let relay_blocked = relay_blocked.clone();
+        let node_identity = identity.clone();
+        let entity_id = cfg.node.entity_id.clone();
         tokio::spawn(async move {
             swarm_task::run_swarm_loop(
                 swarm,
@@ -386,6 +389,8 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 relay_posture_val,
                 relay_accepted,
                 relay_blocked,
+                node_identity,
+                entity_id,
                 shutdown,
             )
             .await;

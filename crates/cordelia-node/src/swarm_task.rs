@@ -3,6 +3,7 @@
 //! All network I/O flows through this task. Governor and replication tasks
 //! communicate via SwarmCommand/SwarmEvent channels.
 
+use cordelia_crypto::identity::NodeIdentity;
 use cordelia_protocol::messages::*;
 use cordelia_replication::{ReceiveOutcome, ReplicationEngine};
 use cordelia_storage::Storage;
@@ -14,6 +15,231 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
+
+// ============================================================================
+// Group descriptor helpers (R4-030)
+// ============================================================================
+
+/// Build GroupDescriptors from local storage for all our groups.
+/// Lazy-signs owned groups that don't have a signature yet.
+fn build_descriptors(
+    storage: &dyn Storage,
+    node_identity: &NodeIdentity,
+    our_entity_id: &str,
+) -> Option<Vec<GroupDescriptor>> {
+    match storage.list_groups() {
+        Ok(groups) if !groups.is_empty() => {
+            let pubkey_hex = hex::encode(node_identity.public_key());
+            let descs: Vec<GroupDescriptor> = groups
+                .into_iter()
+                .map(|g| {
+                    let checksum =
+                        GroupDescriptor::compute_checksum(&g.id, &g.culture);
+                    let mut desc = GroupDescriptor {
+                        id: g.id.clone(),
+                        culture: g.culture,
+                        updated_at: g.updated_at,
+                        checksum,
+                        owner_id: g.owner_id.clone(),
+                        owner_pubkey: g.owner_pubkey.clone(),
+                        signature: g.signature.clone(),
+                    };
+
+                    // Lazy-sign: if we own this group and it's unsigned, sign it now
+                    let we_own_it = g.owner_id.as_deref() == Some(our_entity_id)
+                        || (g.owner_id.is_none() && is_owner(storage, &g.id, our_entity_id));
+
+                    if we_own_it && g.signature.is_none() {
+                        let sig = hex::encode(node_identity.sign(&desc.signing_payload()));
+                        desc.owner_id = Some(our_entity_id.to_string());
+                        desc.owner_pubkey = Some(pubkey_hex.clone());
+                        desc.signature = Some(sig.clone());
+
+                        // Persist so we don't re-sign every exchange
+                        if let Err(e) = storage.write_group_signature(
+                            &g.id,
+                            our_entity_id,
+                            &pubkey_hex,
+                            &sig,
+                        ) {
+                            tracing::warn!(
+                                group_id = %g.id,
+                                "failed to persist group signature: {e}"
+                            );
+                        } else {
+                            tracing::info!(
+                                group_id = %g.id,
+                                "net: lazy-signed group descriptor"
+                            );
+                        }
+                    }
+
+                    desc
+                })
+                .collect();
+            Some(descs)
+        }
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!("failed to list groups for descriptors: {e}");
+            None
+        }
+    }
+}
+
+/// Check if entity is owner of group via group_members table.
+fn is_owner(storage: &dyn Storage, group_id: &str, entity_id: &str) -> bool {
+    storage
+        .get_membership(group_id, entity_id)
+        .ok()
+        .flatten()
+        .map_or(false, |m| m.role == "owner")
+}
+
+/// Merge incoming descriptors into local storage (LWW by updated_at).
+/// Verifies checksum and signature before accepting. Returns count of upserted groups.
+fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> usize {
+    let mut upserted = 0;
+    for desc in descriptors {
+        // Verify checksum integrity
+        if !desc.verify_checksum() {
+            tracing::warn!(
+                group_id = %desc.id,
+                "net: rejecting group descriptor with bad checksum"
+            );
+            continue;
+        }
+
+        // Culture size limit (4KB as per R4-030)
+        if desc.culture.len() > 4096 {
+            tracing::warn!(
+                group_id = %desc.id,
+                culture_len = desc.culture.len(),
+                "net: rejecting group descriptor with oversized culture"
+            );
+            continue;
+        }
+
+        // Verify signature if present
+        if let (Some(ref pubkey_hex), Some(ref sig_hex)) =
+            (&desc.owner_pubkey, &desc.signature)
+        {
+            if !verify_descriptor_signature(desc, pubkey_hex, sig_hex) {
+                tracing::warn!(
+                    group_id = %desc.id,
+                    "net: rejecting group descriptor with invalid signature"
+                );
+                continue;
+            }
+        }
+
+        // If we already know this group and it has a signature, reject unsigned updates
+        if let Ok(Some(ref local)) = storage.read_group(&desc.id) {
+            if local.signature.is_some() && desc.signature.is_none() {
+                tracing::warn!(
+                    group_id = %desc.id,
+                    "net: rejecting unsigned descriptor for signed group"
+                );
+                continue;
+            }
+
+            // If both signed, ensure same owner (prevent owner hijack)
+            if let (Some(ref local_owner), Some(ref incoming_owner)) =
+                (&local.owner_pubkey, &desc.owner_pubkey)
+            {
+                if local_owner != incoming_owner {
+                    tracing::warn!(
+                        group_id = %desc.id,
+                        "net: rejecting descriptor with different owner pubkey"
+                    );
+                    continue;
+                }
+            }
+        }
+
+        // LWW: only upsert if incoming is newer than local
+        // Also capture local name (name is not on wire -- portal distributes it out-of-band)
+        let local_name;
+        match storage.read_group(&desc.id) {
+            Ok(Some(local)) if local.updated_at >= desc.updated_at => {
+                tracing::trace!(
+                    group_id = %desc.id,
+                    "net: skipping group descriptor (local is same or newer)"
+                );
+                continue;
+            }
+            Ok(Some(local)) => {
+                local_name = local.name.clone();
+                // Check for eagerness increase (soft downgrade policy)
+                if eagerness_increased(&local.culture, &desc.culture) {
+                    tracing::info!(
+                        group_id = %desc.id,
+                        "net: group culture eagerness increased via replication (allowed, soft policy)"
+                    );
+                }
+            }
+            _ => {
+                // No local copy -- use group ID as placeholder name
+                // (portal will provide display name during enrollment)
+                local_name = desc.id.clone();
+            }
+        }
+
+        match storage.write_group(&desc.id, &local_name, &desc.culture, "{}") {
+            Ok(_) => {
+                // Persist signature fields if present
+                if let (Some(ref oid), Some(ref pk), Some(ref sig)) =
+                    (&desc.owner_id, &desc.owner_pubkey, &desc.signature)
+                {
+                    let _ = storage.write_group_signature(&desc.id, oid, pk, sig);
+                }
+                tracing::debug!(
+                    group_id = %desc.id,
+                    signed = desc.signature.is_some(),
+                    "net: merged group descriptor from peer"
+                );
+                upserted += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    group_id = %desc.id,
+                    "net: failed to write group descriptor: {e}"
+                );
+            }
+        }
+    }
+    upserted
+}
+
+/// Verify an Ed25519 signature on a group descriptor.
+fn verify_descriptor_signature(
+    desc: &GroupDescriptor,
+    pubkey_hex: &str,
+    sig_hex: &str,
+) -> bool {
+    let Ok(pubkey_bytes) = hex::decode(pubkey_hex) else {
+        return false;
+    };
+    let Ok(sig_bytes) = hex::decode(sig_hex) else {
+        return false;
+    };
+    let payload = desc.signing_payload();
+    let public_key = ring::signature::UnparsedPublicKey::new(
+        &ring::signature::ED25519,
+        &pubkey_bytes,
+    );
+    public_key.verify(&payload, &sig_bytes).is_ok()
+}
+
+/// Check if broadcast_eagerness increased (informational only, soft policy).
+fn eagerness_increased(old_culture: &str, new_culture: &str) -> bool {
+    fn parse_eagerness(culture: &str) -> u8 {
+        if culture.contains("\"eager\"") { 2 }
+        else if culture.contains("\"moderate\"") { 1 }
+        else { 0 } // passive or unknown
+    }
+    parse_eagerness(new_culture) > parse_eagerness(old_culture)
+}
 
 // ============================================================================
 // Behaviour definition
@@ -192,6 +418,8 @@ pub async fn run_swarm_loop(
     relay_posture: Option<crate::config::RelayPosture>,
     relay_accepted_groups: Option<Arc<RwLock<HashSet<String>>>>,
     relay_blocked_groups: Arc<HashSet<String>>,
+    node_identity: Arc<NodeIdentity>,
+    our_entity_id: String,
     mut shutdown: broadcast::Receiver<()>,
 ) {
     // Track pending outbound request-response channels
@@ -244,8 +472,12 @@ pub async fn run_swarm_loop(
                         tracing::debug!(%peer, items = request.items.len(), "net: sending push");
                         swarm.behaviour_mut().memory_push.send_request(&peer, request);
                     }
-                    SwarmCommand::SendGroupExchange { peer, request, response_tx } => {
-                        tracing::debug!(%peer, our_groups = request.groups.len(), "net: sending group exchange");
+                    SwarmCommand::SendGroupExchange { peer, mut request, response_tx } => {
+                        // Enrich with descriptors from local storage (R4-030)
+                        if request.descriptors.is_none() {
+                            request.descriptors = build_descriptors(storage.as_ref(), &node_identity, &our_entity_id);
+                        }
+                        tracing::debug!(%peer, our_groups = request.groups.len(), descriptors = request.descriptors.as_ref().map_or(0, |d| d.len()), "net: sending group exchange");
                         let req_id = swarm.behaviour_mut().group_exchange.send_request(&peer, request);
                         pending_group_exchange.insert(req_id, response_tx);
                     }
@@ -447,6 +679,8 @@ pub async fn run_swarm_loop(
                             &mut pending_sync,
                             &mut pending_fetch,
                             &mut pending_group_exchange,
+                            &node_identity,
+                            &our_entity_id,
                         );
                     }
                     _ => {}
@@ -494,6 +728,8 @@ fn handle_behaviour_event(
         request_response::OutboundRequestId,
         oneshot::Sender<Result<GroupExchangeResponse, String>>,
     >,
+    node_identity: &Arc<NodeIdentity>,
+    our_entity_id: &str,
 ) {
     match event {
         // -- Ping --
@@ -675,11 +911,26 @@ fn handle_behaviour_event(
             tracing::debug!(
                 %peer,
                 their_groups = request.groups.len(),
+                their_descriptors = request.descriptors.as_ref().map_or(0, |d| d.len()),
                 our_groups = our_groups.len(),
                 "net: served group exchange request"
             );
+
+            // Merge incoming descriptors from peer (R4-030)
+            if let Some(ref descs) = request.descriptors {
+                let merged = merge_descriptors(storage.as_ref(), descs);
+                if merged > 0 {
+                    tracing::info!(
+                        %peer,
+                        merged,
+                        "net: merged group descriptors from peer request"
+                    );
+                }
+            }
+
             let resp = GroupExchangeResponse {
                 groups: our_groups.to_vec(),
+                descriptors: build_descriptors(storage.as_ref(), &node_identity, &our_entity_id),
             };
             let _ = swarm
                 .behaviour_mut()
@@ -694,6 +945,17 @@ fn handle_behaviour_event(
                 },
             ..
         }) => {
+            // Merge incoming descriptors from peer response (R4-030)
+            if let Some(ref descs) = response.descriptors {
+                let merged = merge_descriptors(storage.as_ref(), descs);
+                if merged > 0 {
+                    tracing::info!(
+                        merged,
+                        "net: merged group descriptors from peer response"
+                    );
+                }
+            }
+
             if let Some(tx) = pending_group_exchange.remove(&request_id) {
                 let _ = tx.send(Ok(response));
             }

@@ -30,6 +30,7 @@ toml = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
+ring = { workspace = true }
 reqwest = { workspace = true }
 chrono = { workspace = true }
 axum = { workspace = true }

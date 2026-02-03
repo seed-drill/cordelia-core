@@ -110,14 +110,66 @@ pub struct PushAck {
 // Group Exchange
 // ============================================================================
 
+/// Lightweight group metadata for protocol-level propagation.
+/// Carries culture (replication policy) but NOT membership or name.
+/// Name is display metadata -- distributed out-of-band by the portal.
+/// Group IDs should be UUIDs (opaque). See R4-030 design doc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupDescriptor {
+    pub id: String,
+    /// Culture JSON (replication policy). Max 4KB.
+    pub culture: String,
+    /// ISO 8601 timestamp of last update.
+    pub updated_at: String,
+    /// SHA-256 of canonical(id + culture) for integrity verification.
+    pub checksum: String,
+    /// Entity ID of the group owner (signs the descriptor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<String>,
+    /// Hex-encoded Ed25519 public key of the owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_pubkey: Option<String>,
+    /// Hex-encoded Ed25519 signature over canonical(id + culture + updated_at).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+impl GroupDescriptor {
+    /// Compute the canonical checksum for a group descriptor.
+    pub fn compute_checksum(id: &str, culture: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let canonical = format!("{}\n{}", id, culture);
+        let hash = Sha256::digest(canonical.as_bytes());
+        hex::encode(hash)
+    }
+
+    /// Verify this descriptor's checksum matches its contents.
+    pub fn verify_checksum(&self) -> bool {
+        self.checksum == Self::compute_checksum(&self.id, &self.culture)
+    }
+
+    /// Canonical payload for signing: id + culture + updated_at.
+    pub fn signing_payload(&self) -> Vec<u8> {
+        format!("{}\n{}\n{}", self.id, self.culture, self.updated_at)
+            .into_bytes()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupExchange {
     pub groups: Vec<GroupId>,
+    /// Optional group metadata descriptors (ERA_0 v1.1 extension).
+    /// Old peers ignore this field; new peers populate it alongside `groups`.
+    #[serde(default)]
+    pub descriptors: Option<Vec<GroupDescriptor>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupExchangeResponse {
     pub groups: Vec<GroupId>,
+    /// Optional group metadata descriptors (ERA_0 v1.1 extension).
+    #[serde(default)]
+    pub descriptors: Option<Vec<GroupDescriptor>>,
 }
 
 // ============================================================================
@@ -218,9 +270,84 @@ mod tests {
     fn test_group_exchange_roundtrip() {
         let req = GroupExchange {
             groups: vec!["g1".into(), "g2".into()],
+            descriptors: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let decoded: GroupExchange = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.groups, vec!["g1", "g2"]);
+        assert!(decoded.descriptors.is_none());
+    }
+
+    #[test]
+    fn test_group_exchange_with_descriptors() {
+        let checksum = GroupDescriptor::compute_checksum("g1", r#"{"broadcast_eagerness":"moderate"}"#);
+        let req = GroupExchange {
+            groups: vec!["g1".into()],
+            descriptors: Some(vec![GroupDescriptor {
+                id: "g1".into(),
+                culture: r#"{"broadcast_eagerness":"moderate"}"#.into(),
+                updated_at: "2026-02-03T00:00:00Z".into(),
+                checksum: checksum.clone(),
+                owner_id: None,
+                owner_pubkey: None,
+                signature: None,
+            }]),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: GroupExchange = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.groups, vec!["g1"]);
+        let descs = decoded.descriptors.unwrap();
+        assert_eq!(descs.len(), 1);
+        assert!(descs[0].verify_checksum());
+        // No name on wire, no signature fields when unsigned
+        assert!(!json.contains("name"));
+        assert!(!json.contains("owner_id"));
+        assert!(!json.contains("signature"));
+    }
+
+    #[test]
+    fn test_group_exchange_backward_compat() {
+        // Old peers send just groups, no descriptors field
+        let old_json = r#"{"groups":["g1","g2"]}"#;
+        let decoded: GroupExchange = serde_json::from_str(old_json).unwrap();
+        assert_eq!(decoded.groups, vec!["g1", "g2"]);
+        assert!(decoded.descriptors.is_none());
+    }
+
+    #[test]
+    fn test_group_descriptor_checksum() {
+        let checksum = GroupDescriptor::compute_checksum("test", "{}");
+        let desc = GroupDescriptor {
+            id: "test".into(),
+            culture: "{}".into(),
+            updated_at: "2026-02-03T00:00:00Z".into(),
+            checksum,
+            owner_id: None,
+            owner_pubkey: None,
+            signature: None,
+        };
+        assert!(desc.verify_checksum());
+
+        // Tampered culture should fail
+        let bad = GroupDescriptor {
+            culture: r#"{"broadcast_eagerness":"chatty"}"#.into(),
+            ..desc
+        };
+        assert!(!bad.verify_checksum());
+    }
+
+    #[test]
+    fn test_group_descriptor_signing_payload() {
+        let desc = GroupDescriptor {
+            id: "g1".into(),
+            culture: "{}".into(),
+            updated_at: "2026-02-03T00:00:00Z".into(),
+            checksum: "ignored".into(),
+            owner_id: None,
+            owner_pubkey: None,
+            signature: None,
+        };
+        let payload = desc.signing_payload();
+        assert_eq!(payload, b"g1\n{}\n2026-02-03T00:00:00Z");
     }
 }

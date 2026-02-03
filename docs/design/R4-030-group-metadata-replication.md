@@ -21,7 +21,9 @@
 9. [Conflict Resolution](#9-conflict-resolution)
 10. [Migration and Rollout](#10-migration-and-rollout)
 11. [What This Does NOT Do](#11-what-this-does-not-do)
-12. [Open Questions](#12-open-questions)
+11a. [Access Model and Key Architecture](#11a-access-model-and-key-architecture)
+12. [Design Decisions (Resolved)](#12-design-decisions-resolved)
+13. [Open Questions](#13-open-questions)
 
 ---
 
@@ -320,36 +322,78 @@ struct GroupExchange {
 }
 
 struct GroupDescriptor {
-    id: String,
-    name: String,
-    culture: String,           // raw JSON, max 4KB
-    updated_at: String,        // ISO 8601
-    checksum: String,          // SHA-256 of canonical(id + name + culture)
+    id: String,                    // opaque UUID, portal-generated
+    culture: String,               // raw JSON, max 4KB
+    updated_at: String,            // ISO 8601
+    checksum: String,              // SHA-256 of canonical(id + culture)
+    owner_id: Option<String>,      // entity ID of group owner
+    owner_pubkey: Option<String>,  // hex-encoded Ed25519 public key
+    signature: Option<String>,     // hex-encoded Ed25519 signature
 }
 ```
+
+**No name on wire.** Group names are display metadata, not protocol data.
+The portal distributes `id -> name` mappings out-of-band during enrollment.
+Group IDs should be UUIDs (opaque). This prevents metadata leakage to peers --
+a connected peer sees opaque IDs and replication policy, nothing human-readable.
 
 The `descriptors` field is `Option` for backward compatibility. A peer
 running old code ignores unknown fields (serde `#[serde(default)]`).
 A peer running new code sends both `groups` (for old peers) and
 `descriptors` (for new peers).
 
+### 7.6 Owner Signing
+
+The group owner signs the descriptor with their Ed25519 private key.
+The signing payload is `canonical(id + "\n" + culture + "\n" + updated_at)`.
+The signature, owner ID, and public key are included in the descriptor.
+
+**Trust anchor:** The portal (secret keeper) is the trust anchor. During
+group enrollment, the portal distributes the owner's public key to members.
+We don't care who runs the portal -- all that matters is that the entities
+using it trust it. Same model as a CA.
+
+**Lazy signing:** The owning node signs its groups on first GroupExchange
+if they're unsigned. The signature is persisted in storage for subsequent
+exchanges. Non-owner nodes forward the stored signature as-is.
+
+**Verification rules:**
+1. If a descriptor has a signature, verify it against the owner's public key
+2. If a descriptor is unsigned but the local copy is signed, reject it
+   (prevents downgrade to unsigned)
+3. If both local and incoming are signed, reject if owner_pubkey differs
+   (prevents owner hijack)
+4. If neither is signed, accept (graceful upgrade path)
+
 ### 7.3 Size Budget
 
 | Field | Typical size |
 |-------|-------------|
-| `id` | 20-40 bytes |
-| `name` | 20-60 bytes |
+| `id` | 36 bytes (UUID) |
 | `culture` | 50-200 bytes |
 | `updated_at` | 24 bytes |
 | `checksum` | 64 bytes |
-| **Total per group** | **~200-400 bytes** |
+| `owner_id` | 20-40 bytes |
+| `owner_pubkey` | 64 bytes (hex-encoded 32-byte Ed25519) |
+| `signature` | 128 bytes (hex-encoded 64-byte Ed25519) |
+| **Total per group** | **~400-560 bytes** |
 
-10 groups = ~3KB. 100 groups = ~30KB. At 60s intervals this is trivial.
+10 groups = ~5KB. 100 groups = ~50KB. At 60s intervals this is trivial.
 
 Compare: a single L2 item blob is typically 1-10KB. Group metadata is
 noise-level bandwidth.
 
-### 7.4 No security_policy on Wire
+### 7.4 No Name on Wire
+
+Group names are display metadata with no protocol function. Including them
+would leak human-readable information to any connected peer (e.g., "Project X
+Finance Team"). Group IDs should be UUIDs -- opaque to the protocol.
+
+The portal is the naming authority. It distributes `id -> name` mappings to
+authorized clients during enrollment or via periodic polling. The node stores
+the name locally for display but never transmits it over P2P.
+
+### 7.5 No security_policy on Wire
 
 `security_policy` is excluded from the wire format. It is currently unused
 (`'{}'` everywhere) and its semantics are undefined. When we design the
@@ -371,15 +415,22 @@ or modifies the culture of an existing group (e.g., changes `taciturn` to
 `chatty` to trigger eager push and exfiltrate data).
 
 **Mitigation:**
-- `checksum` field: `SHA-256(canonical(id + name + culture))`. Receiving
-  node verifies checksum before applying. Prevents accidental corruption.
+- **Owner signing (primary)**: the group owner signs descriptors with their
+  Ed25519 private key. Only the owner can produce valid signatures. Peers
+  verify before accepting. A rogue peer cannot forge a descriptor because
+  they don't have the owner's private key.
+- `checksum` field: `SHA-256(canonical(id + name + culture))`. Quick
+  integrity check. The signature covers integrity too, but the checksum
+  is cheap for comparison without pulling out the crypto.
+- **Downgrade protection**: once a group has a signed descriptor, unsigned
+  updates are rejected. Prevents an attacker from stripping the signature.
+- **Owner hijack protection**: if the local copy has a known owner pubkey,
+  incoming descriptors with a different pubkey are rejected.
 - **Culture change protection (soft)**: culture changes from the network
-  are accepted and applied (log a warning if eagerness increases). We
-  expect participants to be adults. The response to bad behaviour is key
+  are accepted if signed by the owner (log a warning if eagerness increases).
+  We expect participants to be adults. The response to bad behaviour is key
   recycling and access revocation, not protocol-level prevention. This
   follows the TCP/IP principle: the network is dumb, endpoints are smart.
-  If a peer abuses culture changes, the trust score (`tau_ij`) drops and
-  the peer is eventually excluded.
 - **Entity sovereignty**: if a node's owner has explicitly set a group's
   culture locally, network propagation should not override it. Local
   config is authoritative.
@@ -498,8 +549,84 @@ full state at enrollment, then the P2P layer keeps culture in sync.
   items for it. There is no "permission to create a group" on the network.
 - **Does not implement EMCON.** Posture suppression is a separate concern
   (R4-031 or later).
-- **Does not implement departure policy.** Key rotation on member removal
-  is an R4+ feature requiring envelope encryption (R2-009).
+- **Does not implement departure policy (yet).** The model is documented
+  in Section 11a.4 -- key rotation on member removal. Implementation
+  requires envelope encryption (R2-009 KeyVault, future sprint).
+
+---
+
+## 11a. Access Model and Key Architecture
+
+### 11a.1 Two Keys, Two Jobs
+
+Each group involves two cryptographic keys serving distinct purposes:
+
+| Key | Type | Purpose | Held by |
+|-----|------|---------|---------|
+| **Group symmetric key** | AES-256-GCM (ephemeral, rotatable) | Encrypts/decrypts L2 items (memory data). Confidentiality gate. | All group members |
+| **Owner Ed25519 keypair** | Asymmetric (long-lived) | Signs GroupDescriptor (culture/policy). Authenticity gate. | Group owner only |
+
+The symmetric key controls **who can read and write group data**.
+The owner keypair controls **who can define the group's policy**.
+
+### 11a.2 Write Access
+
+**All group members can write.** Any entity holding the group symmetric
+key can encrypt and publish L2 items to the group. The `author_id` field
+on `FetchedItem` records who wrote each item, but write permission is
+implicit in key possession -- if you can encrypt, you're authorized.
+
+The owner controls the group definition (culture, replication policy)
+via the signed GroupDescriptor. But the group is a collaborative space,
+not a broadcast channel. Think shared directory: the owner sets
+permissions, everyone with access can create files.
+
+### 11a.3 Enrollment Flow
+
+1. Entity requests to join group via the **portal** (the trust anchor)
+2. Portal verifies authorization and distributes:
+   - Group UUID (opaque identifier)
+   - Current group symmetric key + `key_version`
+   - Owner's Ed25519 public key (for descriptor verification)
+   - Group display name (out-of-band, never on P2P wire)
+3. Entity's node stores all locally
+4. Node can now:
+   - **Decrypt** existing L2 items using the symmetric key
+   - **Encrypt** new L2 items for the group
+   - **Verify** GroupDescriptor signatures using the owner's pubkey
+   - **Participate** in GroupExchange with peers (culture propagation)
+
+### 11a.4 Key Revocation on Member Removal
+
+When a member is removed from a group:
+
+1. Portal revokes the member's access
+2. Group symmetric key is **rotated** (new key version)
+3. Portal distributes the new key to remaining members
+4. The removed member:
+   - **Cannot decrypt** new items (encrypted with the new key)
+   - **Cannot encrypt** new items (doesn't have the new key)
+   - **Can still read** items encrypted with the old key they possessed
+     (this is inherent -- you can't un-know a key)
+5. For forward secrecy of old items, re-encryption with the new key is
+   possible but expensive (R2-009 envelope encryption design)
+
+This is the same model as revoking a user's access to a shared drive --
+they can't see new files, but they may have copies of old ones. The
+cryptographic enforcement is stronger than ACL-based revocation because
+the removed member literally cannot produce valid ciphertexts for the group.
+
+### 11a.5 Trust Verification
+
+Entities should periodically poll the portal to verify:
+- The owner's public key hasn't been rotated (key compromise response)
+- Their group symmetric key is current (haven't missed a rotation)
+- Their membership hasn't been revoked
+
+The P2P layer provides the fallback: if the portal is unreachable,
+GroupExchange keeps culture synchronized. But key distribution is
+exclusively the portal's responsibility -- keys never traverse the
+P2P wire.
 
 ---
 

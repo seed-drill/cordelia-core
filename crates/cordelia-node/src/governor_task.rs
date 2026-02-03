@@ -223,6 +223,7 @@ pub async fn run_governor_loop(
                                 peer: peer.node_id,
                                 request: cordelia_protocol::messages::GroupExchange {
                                     groups: groups.clone(),
+                                    descriptors: None, // Enriched by swarm_task (R4-030)
                                 },
                                 response_tx: resp_tx,
                             }).await;
@@ -344,6 +345,7 @@ pub async fn run_governor_loop(
                                 peer: peer_id,
                                 request: cordelia_protocol::messages::GroupExchange {
                                     groups: groups.clone(),
+                                    descriptors: None, // Enriched by swarm_task (R4-030)
                                 },
                                 response_tx: resp_tx,
                             }).await {

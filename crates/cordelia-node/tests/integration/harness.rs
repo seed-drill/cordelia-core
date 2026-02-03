@@ -334,6 +334,7 @@ impl TestNodeBuilder {
         let keypair = identity
             .to_libp2p_keypair()
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let identity = Arc::new(identity);
 
         // Create temp storage
         let tempdir = tempfile::tempdir()?;
@@ -456,6 +457,8 @@ impl TestNodeBuilder {
             let role = self.role;
             let relay_accepted = relay_accepted_groups.clone();
             let relay_blocked = relay_blocked.clone();
+            let node_identity = identity.clone();
+            let entity_id = self.name.clone();
             handles.push(tokio::spawn(async move {
                 swarm_task::run_swarm_loop(
                     swarm,
@@ -468,6 +471,8 @@ impl TestNodeBuilder {
                     relay_posture_val,
                     relay_accepted,
                     relay_blocked,
+                    node_identity,
+                    entity_id,
                     shutdown,
                 )
                 .await;

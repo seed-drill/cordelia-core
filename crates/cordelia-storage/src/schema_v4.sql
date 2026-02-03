@@ -79,7 +79,10 @@ CREATE TABLE IF NOT EXISTS groups (
   culture TEXT NOT NULL DEFAULT '{}',
   security_policy TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  owner_id TEXT,
+  owner_pubkey TEXT,
+  signature TEXT
 );
 
 CREATE TABLE IF NOT EXISTS group_members (

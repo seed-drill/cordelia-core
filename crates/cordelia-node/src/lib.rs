@@ -58,6 +58,16 @@ impl cordelia_storage::Storage for StorageClone {
     ) -> cordelia_storage::Result<()> {
         self.0.write_group(id, name, culture, security_policy)
     }
+    fn write_group_signature(
+        &self,
+        id: &str,
+        owner_id: &str,
+        owner_pubkey: &str,
+        signature: &str,
+    ) -> cordelia_storage::Result<()> {
+        self.0
+            .write_group_signature(id, owner_id, owner_pubkey, signature)
+    }
     fn read_group(&self, id: &str) -> cordelia_storage::Result<Option<cordelia_storage::GroupRow>> {
         self.0.read_group(id)
     }

@@ -91,6 +91,12 @@ pub struct GroupRow {
     pub security_policy: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Entity ID of group owner (signs descriptors).
+    pub owner_id: Option<String>,
+    /// Hex-encoded Ed25519 public key of owner.
+    pub owner_pubkey: Option<String>,
+    /// Hex-encoded Ed25519 signature over group descriptor.
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +149,14 @@ pub trait Storage: Send + Sync {
 
     fn write_group(&self, id: &str, name: &str, culture: &str, security_policy: &str)
         -> Result<()>;
+    /// Update the owner signing fields on a group (R4-030).
+    fn write_group_signature(
+        &self,
+        id: &str,
+        owner_id: &str,
+        owner_pubkey: &str,
+        signature: &str,
+    ) -> Result<()>;
     fn read_group(&self, id: &str) -> Result<Option<GroupRow>>;
     fn list_groups(&self) -> Result<Vec<GroupRow>>;
     fn list_members(&self, group_id: &str) -> Result<Vec<GroupMemberRow>>;
@@ -299,6 +313,18 @@ impl SqliteStorage {
         if version == 4 {
             conn.execute_batch(include_str!("schema_v5.sql"))?;
             tracing::info!("storage: migrated schema v4 -> v5 (devices table)");
+        }
+
+        // Re-read version after v4->v5 migration
+        let version: u32 = conn
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+                row.get(0)
+            })?;
+
+        // Migrate v5 -> v6: add owner signing fields to groups (R4-030)
+        if version == 5 {
+            conn.execute_batch(include_str!("schema_v6.sql"))?;
+            tracing::info!("storage: migrated schema v5 -> v6 (group descriptor signing)");
         }
 
         Ok(())
@@ -502,11 +528,28 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
+    fn write_group_signature(
+        &self,
+        id: &str,
+        owner_id: &str,
+        owner_pubkey: &str,
+        signature: &str,
+    ) -> Result<()> {
+        let conn = self.db()?;
+        conn.execute(
+            "UPDATE groups SET owner_id = ?2, owner_pubkey = ?3, signature = ?4
+             WHERE id = ?1",
+            params![id, owner_id, owner_pubkey, signature],
+        )?;
+        Ok(())
+    }
+
     fn read_group(&self, id: &str) -> Result<Option<GroupRow>> {
         let conn = self.db()?;
         let result = conn
             .query_row(
-                "SELECT id, name, culture, security_policy, created_at, updated_at
+                "SELECT id, name, culture, security_policy, created_at, updated_at,
+                        owner_id, owner_pubkey, signature
                  FROM groups WHERE id = ?1",
                 params![id],
                 |row| {
@@ -517,6 +560,9 @@ impl Storage for SqliteStorage {
                         security_policy: row.get(3)?,
                         created_at: row.get(4)?,
                         updated_at: row.get(5)?,
+                        owner_id: row.get(6)?,
+                        owner_pubkey: row.get(7)?,
+                        signature: row.get(8)?,
                     })
                 },
             )
@@ -527,7 +573,8 @@ impl Storage for SqliteStorage {
     fn list_groups(&self) -> Result<Vec<GroupRow>> {
         let conn = self.db()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, culture, security_policy, created_at, updated_at
+            "SELECT id, name, culture, security_policy, created_at, updated_at,
+                    owner_id, owner_pubkey, signature
              FROM groups ORDER BY name",
         )?;
         let rows = stmt
@@ -539,6 +586,9 @@ impl Storage for SqliteStorage {
                     security_policy: row.get(3)?,
                     created_at: row.get(4)?,
                     updated_at: row.get(5)?,
+                    owner_id: row.get(6)?,
+                    owner_pubkey: row.get(7)?,
+                    signature: row.get(8)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
