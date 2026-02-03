@@ -21,7 +21,7 @@ All production infrastructure runs on Fly.io. Two relay boot nodes provide mesh 
           REST API + dashboard on :3847
 ```
 
-Monthly cost: ~$8-9 (2x shared-cpu-1x 256MB boots + 1x shared-cpu-1x 512MB proxy)
+Monthly cost: ~$12-13 (2x shared-cpu-1x 256MB boots + 1x shared-cpu-1x 512MB proxy + 2x dedicated IPv4 @ $2/mo)
 
 ## Prerequisites
 
@@ -32,51 +32,20 @@ Monthly cost: ~$8-9 (2x shared-cpu-1x 256MB boots + 1x shared-cpu-1x 512MB proxy
 
 ## Deploy
 
-Order matters -- boot nodes must be up before the keeper can connect.
+### CI/CD (automatic)
 
-### 1. Deploy boot1 (London)
+Boot nodes deploy automatically via GitHub Actions on push to `main`:
 
-```bash
-cd cordelia-core
-flyctl deploy --config fly-boot1.toml --remote-only
-```
+- **Workflow**: `.github/workflows/fly-deploy.yml`
+- **Trigger**: push to `main` branch
+- **Strategy**: matrix deploy -- boot1 and boot2 in parallel
+- **Secret**: `FLY_API_TOKEN` (org-scoped, set on cordelia-core repo)
 
-Verify:
-```bash
-flyctl logs -a cordelia-boot1 --no-tail | tail -20
-```
+The proxy deploys separately from `cordelia-proxy` via its own `fly-deploy.yml`.
 
-### 2. Deploy boot2 (Amsterdam)
+Order matters on first deploy -- boot nodes must be up before the keeper can connect. CI/CD handles boot nodes together; the proxy workflow runs independently.
 
-```bash
-flyctl deploy --config fly-boot2.toml --remote-only
-```
-
-Verify boot1 <-> boot2 peering:
-```bash
-flyctl logs -a cordelia-boot2 --no-tail | grep -E "(handshake|connected|peer)"
-```
-
-### 3. Deploy seeddrill-proxy (London)
-
-```bash
-cd cordelia-proxy
-flyctl deploy --remote-only
-```
-
-Verify:
-```bash
-curl https://seeddrill-proxy.fly.dev/api/health
-curl https://seeddrill-proxy.fly.dev/api/core/status
-```
-
-Expected: `ok: true`, `connected: true`, peers >= 2.
-
-## Updating an Existing Deployment
-
-### Code changes
-
-Redeploy from the relevant repo:
+### Manual deploy (if needed)
 
 ```bash
 # Boot nodes
@@ -88,6 +57,14 @@ flyctl deploy --config fly-boot2.toml --remote-only
 cd cordelia-proxy
 flyctl deploy --remote-only
 ```
+
+Verify:
+```bash
+curl https://seeddrill-proxy.fly.dev/api/health
+curl https://seeddrill-proxy.fly.dev/api/core/status
+```
+
+Expected: `ok: true`, `connected: true`, peers >= 2.
 
 ### Config changes on existing volumes
 
@@ -109,31 +86,43 @@ Same procedure for boot2 and seeddrill-proxy (proxy config at `/data/core/config
 
 ## DNS
 
-All DNS managed in Cloudflare.
+All DNS managed in Cloudflare. Boot nodes use **A records** pointing to dedicated IPv4 addresses (not CNAMEs) because Cloudflare's HTTP proxy doesn't handle raw TCP on custom ports. Proxy status must be **DNS only** (grey cloud).
 
-| Record | Type | Value |
-|--------|------|-------|
-| boot1.cordelia.seeddrill.ai | CNAME | cordelia-boot1.fly.dev |
-| boot2.cordelia.seeddrill.ai | CNAME | cordelia-boot2.fly.dev |
+| Record | Type | Value | Proxy |
+|--------|------|-------|-------|
+| boot1.cordelia.seeddrill.ai | A | 137.66.16.11 | DNS only |
+| boot2.cordelia.seeddrill.ai | A | 213.188.208.49 | DNS only |
+
+Dedicated IPv4 addresses are allocated per-app on Fly.io ($2/mo each). To check current IPs:
+
+```bash
+flyctl ips list -a cordelia-boot1
+flyctl ips list -a cordelia-boot2
+```
 
 ## Node Configuration
 
 Both boot nodes use a single parameterised `Dockerfile` with `BOOT_CONFIG` build arg:
 
-| Node | Fly App | Config | Region | Role |
-|------|---------|--------|--------|------|
-| boot1 | cordelia-boot1 | boot1-config.toml | lhr (London) | relay/transparent |
-| boot2 | cordelia-boot2 | boot2-config.toml | ams (Amsterdam) | relay/transparent |
-| proxy | seeddrill-proxy | fly-node-config.toml (in cordelia-proxy) | lhr (London) | keeper |
+| Node | Fly App | Config | Region | Role | Dedicated IP |
+|------|---------|--------|--------|------|--------------|
+| boot1 | cordelia-boot1 | boot1-config.toml | lhr (London) | relay/transparent | 137.66.16.11 |
+| boot2 | cordelia-boot2 | boot2-config.toml | ams (Amsterdam) | relay/transparent | 213.188.208.49 |
+| proxy | seeddrill-proxy | fly-node-config.toml (in cordelia-proxy) | lhr (London) | keeper | shared |
+
+Boot nodes are configured with `auto_stop_machines = "off"` and `min_machines_running = 1` to ensure they are always available for peer discovery.
 
 ## Verification Checklist
 
-1. `flyctl logs -a cordelia-boot1` -- peer connections to boot2
-2. `flyctl logs -a cordelia-boot2` -- peer connections to boot1
-3. `curl https://seeddrill-proxy.fly.dev/api/health` -- ok: true
-4. `curl https://seeddrill-proxy.fly.dev/api/core/status` -- connected: true, groups include seeddrill-internal
-5. `curl https://seeddrill-proxy.fly.dev/api/docs` -- Swagger UI loads
-6. `dig boot1.cordelia.seeddrill.ai` / `dig boot2.cordelia.seeddrill.ai` -- resolve to Fly IPs
+1. `dig boot1.cordelia.seeddrill.ai` -- resolves to `137.66.16.11`
+2. `dig boot2.cordelia.seeddrill.ai` -- resolves to `213.188.208.49`
+3. `nc -zv boot1.cordelia.seeddrill.ai 9474` -- P2P port open
+4. `nc -zv boot2.cordelia.seeddrill.ai 9474` -- P2P port open
+5. `flyctl logs -a cordelia-boot1` -- peer connections to boot2
+6. `flyctl logs -a cordelia-boot2` -- peer connections to boot1
+7. `curl https://seeddrill-proxy.fly.dev/api/health` -- ok: true
+8. `curl https://seeddrill-proxy.fly.dev/api/core/status` -- connected: true, groups include seeddrill-internal
+9. `curl https://seeddrill-proxy.fly.dev/api/docs` -- Swagger UI loads
 
 ## Local Development (macOS)
 
@@ -191,7 +180,7 @@ Identity key and bearer token auto-generate on first run.
 
 | Symptom | Check |
 |---------|-------|
-| No peer connections | UDP 9474 open? DNS resolves? Bootnode running? |
+| No peer connections | TCP 9474 open? DNS resolves to dedicated IP? Bootnode running? |
 | Peers stay Cold/Warm | Check governor tick logs. Groups must overlap. |
 | Replication not working | Both nodes have same group? Peers reached Hot state? |
 | DB errors | Check DB file permissions. Schema auto-inits on empty DB. |
@@ -199,4 +188,4 @@ Identity key and bearer token auto-generate on first run.
 
 ---
 
-*Last updated: 2026-02-02*
+*Last updated: 2026-02-03*
