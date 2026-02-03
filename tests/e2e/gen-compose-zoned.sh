@@ -47,6 +47,10 @@ _save_PROXY_PORT="${PROXY_PORT-}"
 _save_PORTAL_ENABLED="${PORTAL_ENABLED-}"
 _save_PORTAL_IMAGE="${PORTAL_IMAGE-}"
 _save_PORTAL_PORT="${PORTAL_PORT-}"
+_save_PORTAL_BASE_URL="${PORTAL_BASE_URL-}"
+_save_SESSION_SECRET="${SESSION_SECRET-}"
+_save_GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID-}"
+_save_GITHUB_CLIENT_SECRET="${GITHUB_CLIENT_SECRET-}"
 
 if [ -f "$DIR/topology.env" ]; then
     set -a
@@ -75,6 +79,10 @@ fi
 [ -n "$_save_PORTAL_ENABLED" ] && PORTAL_ENABLED="$_save_PORTAL_ENABLED"
 [ -n "$_save_PORTAL_IMAGE" ] && PORTAL_IMAGE="$_save_PORTAL_IMAGE"
 [ -n "$_save_PORTAL_PORT" ] && PORTAL_PORT="$_save_PORTAL_PORT"
+[ -n "$_save_PORTAL_BASE_URL" ] && PORTAL_BASE_URL="$_save_PORTAL_BASE_URL"
+[ -n "$_save_SESSION_SECRET" ] && SESSION_SECRET="$_save_SESSION_SECRET"
+[ -n "$_save_GITHUB_CLIENT_ID" ] && GITHUB_CLIENT_ID="$_save_GITHUB_CLIENT_ID"
+[ -n "$_save_GITHUB_CLIENT_SECRET" ] && GITHUB_CLIENT_SECRET="$_save_GITHUB_CLIENT_SECRET"
 
 # Apply hardcoded defaults for anything still unset
 BACKBONE_COUNT="${BACKBONE_COUNT:-3}"
@@ -97,6 +105,10 @@ PROXY_PORT="${PROXY_PORT:-3847}"
 PORTAL_ENABLED="${PORTAL_ENABLED:-1}"
 PORTAL_IMAGE="${PORTAL_IMAGE:-cordelia-portal:test}"
 PORTAL_PORT="${PORTAL_PORT:-3001}"
+PORTAL_BASE_URL="${PORTAL_BASE_URL:-http://localhost:${PORTAL_PORT}}"
+SESSION_SECRET="${SESSION_SECRET:-e2e-test-session-secret}"
+GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID:-}"
+GITHUB_CLIENT_SECRET="${GITHUB_CLIENT_SECRET:-}"
 
 mkdir -p "$OUT_DIR"
 
@@ -482,11 +494,12 @@ EOF
       - CORDELIA_CORE_API=http://keeper-seeddrill-1:9473
       - CORDELIA_NODE_TOKEN=${BEARER_TOKEN}
       - PROXY_API_URL=http://proxy:3847
-      - PORTAL_URL=http://portal:3001
+      - PORTAL_BASE_URL=${PORTAL_BASE_URL}
       - PORTAL_PORT=3001
       - PORTAL_DB=/data/portal.db
-      - GITHUB_CLIENT_ID=\${GITHUB_CLIENT_ID:-}
-      - GITHUB_CLIENT_SECRET=\${GITHUB_CLIENT_SECRET:-}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
       - NODE_ENV=production
     depends_on:
       keeper-seeddrill-1:
