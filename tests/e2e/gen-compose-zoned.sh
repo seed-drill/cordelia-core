@@ -44,6 +44,9 @@ _save_SYNC_TACITURN="${SYNC_TACITURN-}"
 _save_PROXY_ENABLED="${PROXY_ENABLED-}"
 _save_PROXY_IMAGE="${PROXY_IMAGE-}"
 _save_PROXY_PORT="${PROXY_PORT-}"
+_save_PORTAL_ENABLED="${PORTAL_ENABLED-}"
+_save_PORTAL_IMAGE="${PORTAL_IMAGE-}"
+_save_PORTAL_PORT="${PORTAL_PORT-}"
 
 if [ -f "$DIR/topology.env" ]; then
     set -a
@@ -69,6 +72,9 @@ fi
 [ -n "$_save_PROXY_ENABLED" ] && PROXY_ENABLED="$_save_PROXY_ENABLED"
 [ -n "$_save_PROXY_IMAGE" ] && PROXY_IMAGE="$_save_PROXY_IMAGE"
 [ -n "$_save_PROXY_PORT" ] && PROXY_PORT="$_save_PROXY_PORT"
+[ -n "$_save_PORTAL_ENABLED" ] && PORTAL_ENABLED="$_save_PORTAL_ENABLED"
+[ -n "$_save_PORTAL_IMAGE" ] && PORTAL_IMAGE="$_save_PORTAL_IMAGE"
+[ -n "$_save_PORTAL_PORT" ] && PORTAL_PORT="$_save_PORTAL_PORT"
 
 # Apply hardcoded defaults for anything still unset
 BACKBONE_COUNT="${BACKBONE_COUNT:-3}"
@@ -88,6 +94,9 @@ SYNC_TACITURN="${SYNC_TACITURN:-30}"
 PROXY_ENABLED="${PROXY_ENABLED:-1}"
 PROXY_IMAGE="${PROXY_IMAGE:-cordelia-proxy:test}"
 PROXY_PORT="${PROXY_PORT:-3847}"
+PORTAL_ENABLED="${PORTAL_ENABLED:-1}"
+PORTAL_IMAGE="${PORTAL_IMAGE:-cordelia-portal:test}"
+PORTAL_PORT="${PORTAL_PORT:-3001}"
 
 mkdir -p "$OUT_DIR"
 
@@ -457,6 +466,43 @@ addr = \"edge-seeddrill-2:9474\""
       - org-seeddrill
 
 EOF
+
+    # Portal: management UI on org-seeddrill network (talks to Rust node + proxy)
+    if [ "${PORTAL_ENABLED}" = "1" ]; then
+        cat >> "$COMPOSE_FILE" <<EOF
+  portal:
+    image: ${PORTAL_IMAGE}
+    hostname: portal
+    container_name: cordelia-e2e-portal
+    ports:
+      - "${PORTAL_PORT}:3001"
+    volumes:
+      - portal-data:/data
+    environment:
+      - CORDELIA_CORE_API=http://keeper-seeddrill-1:9473
+      - CORDELIA_NODE_TOKEN=${BEARER_TOKEN}
+      - PROXY_API_URL=http://proxy:3847
+      - PORTAL_URL=http://portal:3001
+      - PORTAL_PORT=3001
+      - PORTAL_DB=/data/portal.db
+      - GITHUB_CLIENT_ID=\${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=\${GITHUB_CLIENT_SECRET:-}
+      - NODE_ENV=production
+    depends_on:
+      keeper-seeddrill-1:
+        condition: service_healthy
+      proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks:
+      - org-seeddrill
+
+EOF
+    fi
 fi
 
 # Networks
@@ -482,6 +528,11 @@ if [ "${PROXY_ENABLED}" = "1" ]; then
 volumes:
   proxy-memory:
 EOF
+    if [ "${PORTAL_ENABLED}" = "1" ]; then
+        cat >> "$COMPOSE_FILE" <<EOF
+  portal-data:
+EOF
+    fi
 fi
 
 echo ""
@@ -506,6 +557,9 @@ if [ "${PROXY_ENABLED}" = "1" ]; then
     echo "  [backbone+org-sd]   edge-seeddrill-1..edge-seeddrill-2 (relay, dynamic)"
     echo "  [org-seeddrill]     keeper-seeddrill-1 (keeper)"
     echo "  [org-seeddrill]     proxy (REST API + dashboard on port ${PROXY_PORT})"
+    if [ "${PORTAL_ENABLED}" = "1" ]; then
+        echo "  [org-seeddrill]     portal (management UI on port ${PORTAL_PORT})"
+    fi
 fi
 echo ""
 
