@@ -6,7 +6,9 @@ use std::time::Duration;
 use cordelia_governor::GovernorTargets;
 use cordelia_node::config::{NodeRole, RelayPosture};
 
-use crate::harness::{build_test_runtime, scaled_timeout, test_node_count, TestMesh, TestNodeBuilder};
+use crate::harness::{
+    build_test_runtime, scaled_timeout, test_node_count, TestMesh, TestNodeBuilder,
+};
 
 /// Write on node 0 with chatty culture group, verify push replication to all N nodes.
 /// Node count from TEST_NODE_COUNT (default 2). Worker threads from TEST_WORKER_THREADS (default 4).
@@ -21,7 +23,12 @@ fn test_item_replication_chatty() {
 
         // Write item on node 0
         mesh.nodes[0]
-            .api_write_item("item-chatty-001", "entity", b"test-blob-chatty", "chatty-group")
+            .api_write_item(
+                "item-chatty-001",
+                "entity",
+                b"test-blob-chatty",
+                "chatty-group",
+            )
             .await
             .unwrap();
 
@@ -48,8 +55,13 @@ async fn test_item_replication_moderate() {
         .role(NodeRole::Relay)
         .groups(groups.clone())
         .governor_targets(GovernorTargets {
-            hot_min: 1, hot_max: 5, warm_min: 1, warm_max: 5,
-            cold_max: 10, churn_interval_secs: 3600, churn_fraction: 0.0,
+            hot_min: 1,
+            hot_max: 5,
+            warm_min: 1,
+            warm_max: 5,
+            cold_max: 10,
+            churn_interval_secs: 3600,
+            churn_fraction: 0.0,
         })
         .build()
         .await
@@ -59,15 +71,23 @@ async fn test_item_replication_moderate() {
         .role(NodeRole::Relay)
         .groups(groups)
         .governor_targets(GovernorTargets {
-            hot_min: 1, hot_max: 5, warm_min: 1, warm_max: 5,
-            cold_max: 10, churn_interval_secs: 3600, churn_fraction: 0.0,
+            hot_min: 1,
+            hot_max: 5,
+            warm_min: 1,
+            warm_max: 5,
+            cold_max: 10,
+            churn_interval_secs: 3600,
+            churn_fraction: 0.0,
         })
         .bootnode(node_a.listen_addr.clone())
         .build()
         .await
         .unwrap();
 
-    node_a.wait_hot_peers(1, Duration::from_secs(60)).await.unwrap();
+    node_a
+        .wait_hot_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
 
     // Write item on A
     node_a
@@ -89,8 +109,13 @@ async fn test_item_replication_moderate() {
 #[tokio::test]
 async fn test_group_scoped_replication() {
     let targets = GovernorTargets {
-        hot_min: 1, hot_max: 5, warm_min: 1, warm_max: 5,
-        cold_max: 10, churn_interval_secs: 3600, churn_fraction: 0.0,
+        hot_min: 1,
+        hot_max: 5,
+        warm_min: 1,
+        warm_max: 5,
+        cold_max: 10,
+        churn_interval_secs: 3600,
+        churn_fraction: 0.0,
     };
 
     let node_a = TestNodeBuilder::new("scope-a")
@@ -120,7 +145,10 @@ async fn test_group_scoped_replication() {
         .unwrap();
 
     // Wait for mesh
-    node_a.wait_connected_peers(2, Duration::from_secs(90)).await.unwrap();
+    node_a
+        .wait_connected_peers(2, Duration::from_secs(90))
+        .await
+        .unwrap();
 
     // Write item in g1 on node A
     node_a
@@ -158,8 +186,13 @@ async fn test_group_scoped_replication() {
 #[tokio::test]
 async fn test_blind_relay_forwarding_transparent() {
     let targets = GovernorTargets {
-        hot_min: 1, hot_max: 5, warm_min: 1, warm_max: 5,
-        cold_max: 10, churn_interval_secs: 3600, churn_fraction: 0.0,
+        hot_min: 1,
+        hot_max: 5,
+        warm_min: 1,
+        warm_max: 5,
+        cold_max: 10,
+        churn_interval_secs: 3600,
+        churn_fraction: 0.0,
     };
 
     // Relay node: no group memberships, transparent posture
@@ -193,13 +226,27 @@ async fn test_blind_relay_forwarding_transparent() {
         .unwrap();
 
     // Wait for connectivity (each node connects to relay, relay connects to both)
-    relay.wait_connected_peers(2, Duration::from_secs(60)).await.unwrap();
-    node_a.wait_connected_peers(1, Duration::from_secs(60)).await.unwrap();
-    node_b.wait_connected_peers(1, Duration::from_secs(60)).await.unwrap();
+    relay
+        .wait_connected_peers(2, Duration::from_secs(60))
+        .await
+        .unwrap();
+    node_a
+        .wait_connected_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
+    node_b
+        .wait_connected_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
 
     // Write item on A
     node_a
-        .api_write_item("relay-fwd-001", "entity", b"{\"test\":\"transparent\"}", "g1")
+        .api_write_item(
+            "relay-fwd-001",
+            "entity",
+            b"{\"test\":\"transparent\"}",
+            "g1",
+        )
         .await
         .unwrap();
 
@@ -228,8 +275,13 @@ async fn test_blind_relay_forwarding_transparent() {
 #[tokio::test]
 async fn test_dynamic_relay_scoping() {
     let targets = GovernorTargets {
-        hot_min: 1, hot_max: 5, warm_min: 1, warm_max: 5,
-        cold_max: 10, churn_interval_secs: 3600, churn_fraction: 0.0,
+        hot_min: 1,
+        hot_max: 5,
+        warm_min: 1,
+        warm_max: 5,
+        cold_max: 10,
+        churn_interval_secs: 3600,
+        churn_fraction: 0.0,
     };
 
     // Dynamic relay: learns groups from connected peers
@@ -263,9 +315,18 @@ async fn test_dynamic_relay_scoping() {
         .unwrap();
 
     // Wait for connectivity and group exchange to complete
-    relay.wait_connected_peers(2, Duration::from_secs(60)).await.unwrap();
-    node_a.wait_connected_peers(1, Duration::from_secs(60)).await.unwrap();
-    node_b.wait_connected_peers(1, Duration::from_secs(60)).await.unwrap();
+    relay
+        .wait_connected_peers(2, Duration::from_secs(60))
+        .await
+        .unwrap();
+    node_a
+        .wait_connected_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
+    node_b
+        .wait_connected_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
 
     // Allow time for GroupExchange to propagate learned groups to relay
     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -317,8 +378,13 @@ async fn test_dynamic_relay_scoping() {
 #[tokio::test]
 async fn test_blocked_groups() {
     let targets = GovernorTargets {
-        hot_min: 1, hot_max: 5, warm_min: 1, warm_max: 5,
-        cold_max: 10, churn_interval_secs: 3600, churn_fraction: 0.0,
+        hot_min: 1,
+        hot_max: 5,
+        warm_min: 1,
+        warm_max: 5,
+        cold_max: 10,
+        churn_interval_secs: 3600,
+        churn_fraction: 0.0,
     };
 
     // Transparent relay with g1 blocked
@@ -350,9 +416,18 @@ async fn test_blocked_groups() {
         .await
         .unwrap();
 
-    relay.wait_connected_peers(2, Duration::from_secs(60)).await.unwrap();
-    node_a.wait_connected_peers(1, Duration::from_secs(60)).await.unwrap();
-    node_b.wait_connected_peers(1, Duration::from_secs(60)).await.unwrap();
+    relay
+        .wait_connected_peers(2, Duration::from_secs(60))
+        .await
+        .unwrap();
+    node_a
+        .wait_connected_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
+    node_b
+        .wait_connected_peers(1, Duration::from_secs(60))
+        .await
+        .unwrap();
 
     // Write g1 item on A
     node_a
@@ -451,7 +526,10 @@ fn test_replication_propagation_timing() {
             let (node_idx, elapsed) = handle.await.unwrap();
             match elapsed {
                 Some(dur) => arrival_times.push((node_idx, dur)),
-                None => panic!("node-{} never received timing item within timeout", node_idx),
+                None => panic!(
+                    "node-{} never received timing item within timeout",
+                    node_idx
+                ),
             }
         }
 
@@ -463,7 +541,8 @@ fn test_replication_propagation_timing() {
         }
         let first = arrival_times.first().unwrap().1;
         let last = arrival_times.last().unwrap().1;
-        eprintln!("  FIRST: {:.1}ms  LAST: {:.1}ms  SPREAD: {:.1}ms",
+        eprintln!(
+            "  FIRST: {:.1}ms  LAST: {:.1}ms  SPREAD: {:.1}ms",
             first.as_secs_f64() * 1000.0,
             last.as_secs_f64() * 1000.0,
             (last - first).as_secs_f64() * 1000.0,

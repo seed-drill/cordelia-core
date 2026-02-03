@@ -198,10 +198,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
 
     // Seed config-defined groups into storage (idempotent)
     for group_id in &cfg.node.groups {
-        let exists = storage
-            .read_group(group_id)
-            .unwrap_or(None)
-            .is_some();
+        let exists = storage.read_group(group_id).unwrap_or(None).is_some();
         if !exists {
             let default_culture = r#"{"broadcast_eagerness":"chatty"}"#;
             if let Err(e) = storage.write_group(group_id, group_id, default_culture, "{}") {
@@ -338,12 +335,12 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     // For transparent: not used (acceptance is always true).
     let relay_accepted_groups: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>> =
         match relay_posture_val {
-            Some(RelayPosture::Dynamic) => {
-                Some(Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())))
-            }
-            Some(RelayPosture::Explicit) => {
-                Some(Arc::new(tokio::sync::RwLock::new(cfg.relay_allowed_groups())))
-            }
+            Some(RelayPosture::Dynamic) => Some(Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashSet::new(),
+            ))),
+            Some(RelayPosture::Explicit) => Some(Arc::new(tokio::sync::RwLock::new(
+                cfg.relay_allowed_groups(),
+            ))),
             _ => None,
         };
 

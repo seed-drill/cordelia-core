@@ -226,17 +226,14 @@ impl TestNode {
         let resp = client
             .post(&url)
             .header("Content-Type", "application/json")
-            .header(
-                "Authorization",
-                format!("Bearer {}", self.bearer_token),
-            )
+            .header("Authorization", format!("Bearer {}", self.bearer_token))
             .json(&body)
             .send()
             .await?;
         let status = resp.status().as_u16();
         let text = resp.text().await?;
-        let val: serde_json::Value = serde_json::from_str(&text)
-            .unwrap_or(serde_json::json!({"_raw": text}));
+        let val: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or(serde_json::json!({"_raw": text}));
         Ok((status, val))
     }
 
@@ -334,7 +331,9 @@ impl TestNodeBuilder {
         // Generate identity
         let identity = NodeIdentity::generate()?;
         let peer_id = *identity.peer_id();
-        let keypair = identity.to_libp2p_keypair().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let keypair = identity
+            .to_libp2p_keypair()
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         // Create temp storage
         let tempdir = tempfile::tempdir()?;
@@ -355,8 +354,7 @@ impl TestNodeBuilder {
         let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
         // Write notification channel
-        let (write_tx, write_rx) =
-            broadcast::channel::<cordelia_api::WriteNotification>(256);
+        let (write_tx, write_rx) = broadcast::channel::<cordelia_api::WriteNotification>(256);
 
         // Replication stats
         let repl_stats = Arc::new(ReplicationStats::new());
@@ -413,7 +411,8 @@ impl TestNodeBuilder {
         )));
 
         // Replication engine
-        let repl_engine = ReplicationEngine::new(self.replication_config.clone(), self.name.clone());
+        let repl_engine =
+            ReplicationEngine::new(self.replication_config.clone(), self.name.clone());
 
         // Relay state
         let is_relay = self.role == NodeRole::Relay && self.relay_posture.is_some();
@@ -424,16 +423,15 @@ impl TestNodeBuilder {
         };
         let relay_blocked = Arc::new(self.relay_blocked_groups.clone());
 
-        let relay_accepted_groups: Option<Arc<RwLock<HashSet<String>>>> =
-            match relay_posture_val {
-                Some(RelayPosture::Dynamic) => Some(Arc::new(RwLock::new(HashSet::new()))),
-                Some(RelayPosture::Explicit) => {
-                    // For explicit, the builder would need allowed_groups.
-                    // For tests, start with empty and let the test populate.
-                    Some(Arc::new(RwLock::new(HashSet::new())))
-                }
-                _ => None,
-            };
+        let relay_accepted_groups: Option<Arc<RwLock<HashSet<String>>>> = match relay_posture_val {
+            Some(RelayPosture::Dynamic) => Some(Arc::new(RwLock::new(HashSet::new()))),
+            Some(RelayPosture::Explicit) => {
+                // For explicit, the builder would need allowed_groups.
+                // For tests, start with empty and let the test populate.
+                Some(Arc::new(RwLock::new(HashSet::new())))
+            }
+            _ => None,
+        };
 
         let relay_learned_groups: Option<Arc<RwLock<HashSet<String>>>> =
             if relay_posture_val == Some(RelayPosture::Dynamic) {
@@ -606,7 +604,9 @@ impl TestMesh {
 
     /// Create N nodes with per-node group assignments. Each inner Vec is the
     /// groups for that node. Node 0 is seed, subsequent nodes bootnode to all prior.
-    pub async fn with_group_assignments(group_assignments: Vec<Vec<String>>) -> anyhow::Result<Self> {
+    pub async fn with_group_assignments(
+        group_assignments: Vec<Vec<String>>,
+    ) -> anyhow::Result<Self> {
         let n = group_assignments.len();
         let mut nodes = Vec::new();
 
@@ -643,14 +643,14 @@ impl TestMesh {
         for (i, node) in self.nodes.iter().enumerate() {
             if self.nodes.len() == 2 {
                 // 2-node: single peer should reach hot
-                node.wait_hot_peers(expected, timeout).await.map_err(|e| {
-                    anyhow::anyhow!("node-{} failed to reach full mesh: {}", i, e)
-                })?;
+                node.wait_hot_peers(expected, timeout)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("node-{} failed to reach full mesh: {}", i, e))?;
             } else {
                 // N-node: wait for all peers connected (warm or hot)
-                node.wait_connected_peers(expected, timeout).await.map_err(|e| {
-                    anyhow::anyhow!("node-{} failed to reach full mesh: {}", i, e)
-                })?;
+                node.wait_connected_peers(expected, timeout)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("node-{} failed to reach full mesh: {}", i, e))?;
             }
         }
         Ok(())

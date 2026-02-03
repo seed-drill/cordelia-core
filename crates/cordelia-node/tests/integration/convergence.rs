@@ -5,7 +5,9 @@ use std::time::Duration;
 use cordelia_governor::GovernorTargets;
 use cordelia_node::config::NodeRole;
 
-use crate::harness::{build_test_runtime, scaled_timeout, test_node_count, TestMesh, TestNodeBuilder};
+use crate::harness::{
+    build_test_runtime, scaled_timeout, test_node_count, TestMesh, TestNodeBuilder,
+};
 
 /// Two nodes reach hot=1.
 #[tokio::test]

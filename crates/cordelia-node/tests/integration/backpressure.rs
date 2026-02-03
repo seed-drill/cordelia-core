@@ -87,10 +87,7 @@ async fn test_oversized_suppressed_replication() {
 
     // Verify it does NOT appear on node 1
     tokio::time::sleep(Duration::from_secs(5)).await;
-    let result = mesh.nodes[1]
-        .api_read_item("big-repl-item")
-        .await
-        .unwrap();
+    let result = mesh.nodes[1].api_read_item("big-repl-item").await.unwrap();
     assert!(
         result.get("data").is_none() && result.get("type").is_none(),
         "oversized item should not be replicated, got: {}",

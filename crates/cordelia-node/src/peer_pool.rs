@@ -159,10 +159,7 @@ impl PeerPool {
     /// Get a random hot peer for a group, including relays.
     /// Used by anti-entropy sync on relays where group membership is irrelevant.
     /// Falls back to warm peers if no hot peers available.
-    pub async fn random_hot_peer_for_group_or_relays(
-        &self,
-        group_id: &str,
-    ) -> Option<PeerHandle> {
+    pub async fn random_hot_peer_for_group_or_relays(&self, group_id: &str) -> Option<PeerHandle> {
         let pool = self.inner.read().await;
         let mut peers: Vec<&PeerHandle> = pool
             .values()
@@ -211,6 +208,12 @@ impl PeerPool {
     /// Total connected peer count.
     pub async fn len(&self) -> usize {
         self.inner.read().await.len()
+    }
+
+    #[allow(dead_code)]
+    /// Whether the pool is empty.
+    pub async fn is_empty(&self) -> bool {
+        self.inner.read().await.is_empty()
     }
 
     /// Update a peer's groups and recompute group_intersection.

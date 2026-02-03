@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo test --test integration -- --test-threads=1
 
-mod harness;
-mod convergence;
-mod replication;
 mod backpressure;
+mod convergence;
+mod harness;
+mod replication;

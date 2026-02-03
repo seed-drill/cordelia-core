@@ -376,7 +376,7 @@ pub async fn run_swarm_loop(
                                 if is_transparent {
                                     return true;
                                 }
-                                accepted_snap.as_ref().map_or(false, |s| s.contains(gid))
+                                accepted_snap.as_ref().is_some_and(|s| s.contains(gid))
                             };
                             Some(check)
                         } else {
@@ -644,8 +644,7 @@ fn handle_behaviour_event(
         // -- Memory Push --
         // Handled in run_swarm_loop (needs async pool access for relay re-push)
         CordeliaBehaviourEvent::MemoryPush(request_response::Event::Message {
-            message:
-                request_response::Message::Request { .. },
+            message: request_response::Message::Request { .. },
             ..
         }) => {
             // This arm should not fire -- push requests are handled in the

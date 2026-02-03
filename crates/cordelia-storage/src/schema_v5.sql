@@ -15,4 +15,4 @@ CREATE TABLE IF NOT EXISTS devices (
 
 CREATE INDEX IF NOT EXISTS idx_devices_entity ON devices(entity_id);
 
-UPDATE schema_version SET version = 5, migrated_at = datetime('now');
+UPDATE schema_version SET version = 5, migrated_at = datetime('now') WHERE version = 4;

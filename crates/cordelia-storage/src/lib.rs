@@ -1095,7 +1095,11 @@ mod tests {
         assert!(storage.list_stored_group_ids().unwrap().is_empty());
 
         // Add items in two groups
-        for (id, group) in &[("a", "group-alpha"), ("b", "group-alpha"), ("c", "group-bravo")] {
+        for (id, group) in &[
+            ("a", "group-alpha"),
+            ("b", "group-alpha"),
+            ("c", "group-bravo"),
+        ] {
             storage
                 .write_l2_item(&L2ItemWrite {
                     id: id.to_string(),
@@ -1198,7 +1202,10 @@ mod tests {
         assert!(!storage.revoke_device("russell", "dev-001").unwrap()); // already revoked
 
         // Revoked device not found by token hash
-        assert!(storage.get_device_by_token_hash("abc123hash").unwrap().is_none());
+        assert!(storage
+            .get_device_by_token_hash("abc123hash")
+            .unwrap()
+            .is_none());
 
         // But still listed (with revoked_at set)
         let devices2 = storage.list_devices("russell").unwrap();

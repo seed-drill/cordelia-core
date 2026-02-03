@@ -546,9 +546,18 @@ posture = "transparent"
 
     #[test]
     fn test_relay_posture_parse() {
-        assert_eq!("transparent".parse::<RelayPosture>().unwrap(), RelayPosture::Transparent);
-        assert_eq!("dynamic".parse::<RelayPosture>().unwrap(), RelayPosture::Dynamic);
-        assert_eq!("explicit".parse::<RelayPosture>().unwrap(), RelayPosture::Explicit);
+        assert_eq!(
+            "transparent".parse::<RelayPosture>().unwrap(),
+            RelayPosture::Transparent
+        );
+        assert_eq!(
+            "dynamic".parse::<RelayPosture>().unwrap(),
+            RelayPosture::Dynamic
+        );
+        assert_eq!(
+            "explicit".parse::<RelayPosture>().unwrap(),
+            RelayPosture::Explicit
+        );
         assert!("unknown".parse::<RelayPosture>().is_err());
     }
 }

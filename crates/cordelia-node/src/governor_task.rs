@@ -171,7 +171,7 @@ pub async fn run_governor_loop(
                 // re-dial it. Bootnodes are critical infrastructure -- they
                 // must stay connected. Like a Culture Mind making contact,
                 // we keep trying whether the other end is ready or not.
-                if tick_count > 0 && tick_count % 6 == 0 && !resolved_bootnode_addrs.is_empty() {
+                if tick_count > 0 && tick_count.is_multiple_of(6) && !resolved_bootnode_addrs.is_empty() {
                     let active_peers = pool.active_peers().await;
                     let active_addrs: HashSet<Multiaddr> = active_peers
                         .iter()

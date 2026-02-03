@@ -552,9 +552,8 @@ async fn run_anti_entropy(
             .map_err(|e| format!("fetch request failed: {e}"))?;
 
         for item in &fetch_resp.items {
-            let relay_fn = relay_accept_set.map(|set| {
-                move |gid: &str| -> bool { set.contains(gid) }
-            });
+            let relay_fn =
+                relay_accept_set.map(|set| move |gid: &str| -> bool { set.contains(gid) });
             let relay_ref: Option<&dyn Fn(&str) -> bool> =
                 relay_fn.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
             let outcome = engine.on_receive(storage.as_ref(), item, our_groups, relay_ref);
