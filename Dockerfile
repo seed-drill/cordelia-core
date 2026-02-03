@@ -9,7 +9,7 @@ RUN cargo clean && cargo build --release --bin cordelia-node
 # Runtime stage
 FROM debian:bookworm-slim
 
-ARG BOOT_CONFIG=boot3-config.toml
+ARG BOOT_CONFIG=boot1-config.toml
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl \
