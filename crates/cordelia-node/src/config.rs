@@ -381,10 +381,10 @@ entity_id = "russell"
 listen_addr = "0.0.0.0:9474"
 
 [[network.bootnodes]]
-addr = "russell.cordelia.seeddrill.io:9474"
+addr = "russell.cordelia.seeddrill.ai:9474"
 
 [[network.bootnodes]]
-addr = "martin.cordelia.seeddrill.io:9474"
+addr = "martin.cordelia.seeddrill.ai:9474"
 
 [governor]
 hot_min = 2
@@ -402,7 +402,7 @@ tombstone_retention_days = 7
         assert_eq!(cfg.network.bootnodes.len(), 2);
         assert_eq!(
             cfg.network.bootnodes[0].addr,
-            "russell.cordelia.seeddrill.io:9474"
+            "russell.cordelia.seeddrill.ai:9474"
         );
         assert_eq!(cfg.governor.hot_min, 2);
     }
@@ -447,10 +447,10 @@ role = "keeper"
 listen_addr = "0.0.0.0:9474"
 
 [[network.trusted_relays]]
-addr = "boot1.cordelia.seeddrill.io:9474"
+addr = "boot1.cordelia.seeddrill.ai:9474"
 
 [[network.trusted_relays]]
-addr = "boot2.cordelia.seeddrill.io:9474"
+addr = "boot2.cordelia.seeddrill.ai:9474"
 "#;
         let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.role(), NodeRole::Keeper);

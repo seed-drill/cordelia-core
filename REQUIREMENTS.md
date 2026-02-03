@@ -774,7 +774,7 @@ The system SHALL implement RFC 8628 Device Authorization Grant for enrolling new
 POST /api/v1/device/begin
   Request:  { "client_id": "cordelia-proxy" }
   Response: { "device_code": "ABCD-EFGH",
-              "verification_uri": "https://dash.cordelia.seeddrill.io/enroll",
+              "verification_uri": "https://dash.cordelia.seeddrill.ai/enroll",
               "expires_in": 600, "interval": 5 }
 ```
 

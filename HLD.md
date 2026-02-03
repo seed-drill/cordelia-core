@@ -205,7 +205,7 @@ POST /api/v1/groups/items
 POST /api/v1/device/begin
   Request:  { "client_id": "cordelia-proxy" }
   Response: { "device_code": "ABCD-EFGH",
-              "verification_uri": "https://dash.cordelia.seeddrill.io/enroll",
+              "verification_uri": "https://dash.cordelia.seeddrill.ai/enroll",
               "expires_in": 600,
               "interval": 5 }
 
@@ -927,7 +927,7 @@ listen_addr = "0.0.0.0:9474"
 
 [[network.bootnodes]]
 node_id = "3d223867d707af7021ffd2d07bedd41acbf6f672ee42cd4433f649d721bf655e"
-addr = "boot1.cordelia.seeddrill.io:9474"
+addr = "boot1.cordelia.seeddrill.ai:9474"
 
 [governor]
 hot_min = 2
@@ -999,7 +999,7 @@ TOML file takes precedence over env vars when both are set.
 | Rust HTTP API | Done | 11 endpoints, bearer auth |
 | Rust storage (SQLite) | Done | schema v4, WAL, FTS5 |
 | Rust crypto | Done | AES-256-GCM, Ed25519, round-trip with TS |
-| Bootnode deployment | Done | boot1.cordelia.seeddrill.io:9474 |
+| Bootnode deployment | Done | boot1.cordelia.seeddrill.ai:9474 |
 | Proxy MCP server (existing) | Done | 187 tests, 25 tools, encryption |
 | Proxy dashboard HTTP (existing) | Done | Auth, profile, L1/L2 API, admin |
 | Repo split | Done | cordelia-core (Rust) + cordelia-proxy (TS) |
@@ -1143,7 +1143,7 @@ See WP2 (Section 4) for full spec.
 ### Phase 5: Service Operations (R4+)
 - **SLA monitoring**: Keeper availability, archive durability.
 - **Billing**: Per-org keeper/archive subscription.
-- **Customer onboarding**: Self-serve via seeddrill.io.
+- **Customer onboarding**: Self-serve via seeddrill.ai.
 
 ### Work Split Principle
 

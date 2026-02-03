@@ -827,7 +827,7 @@ is and what it was working on.
 - Governor peer lifecycle (cold/warm/hot/banned, churn rotation)
 - SQLite storage with FTS5 search
 - Dashboard with authentication
-- Bootnode deployed at `boot1.cordelia.seeddrill.io:9474`
+- Bootnode deployed at `boot1.cordelia.seeddrill.ai:9474`
 - AGPL-3.0 licensed
 
 ### 10.2 R2 -- Hardening

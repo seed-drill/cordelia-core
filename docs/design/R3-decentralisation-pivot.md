@@ -63,7 +63,7 @@ Agent <--stdio--> @cordelia/proxy <--P2P--> Peer nodes
 
 ### 5. Central website for onboarding and discovery only
 
-- seeddrill.io provides onboarding, docs, discovery tooling
+- seeddrill.ai provides onboarding, docs, discovery tooling
 - Not required to run Cordelia -- people can run without touching us at all
 - No data flows through the website
 - No governance authority over the network

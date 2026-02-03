@@ -3,7 +3,7 @@
 **Status**: Design draft
 **Prerequisite**: User has an existing Cordelia account (signed up via dashboard)
 **IDP**: GitHub OAuth 2.0
-**Central service**: Seed Drill Dashboard (cordelia.seeddrill.io)
+**Central service**: Seed Drill Dashboard (cordelia.seeddrill.ai)
 
 ---
 
@@ -30,7 +30,7 @@ sequenceDiagram
     participant CLI as Claude CLI
     participant Proxy as @cordelia/proxy<br/>(local, TypeScript)
     participant Browser
-    participant Dashboard as Seed Drill Dashboard<br/>cordelia.seeddrill.io
+    participant Dashboard as Seed Drill Dashboard<br/>cordelia.seeddrill.ai
     participant GitHub as GitHub<br/>(OAuth IDP)
     participant Node as cordelia-node<br/>(Rust, Seed Drill infra)
 
@@ -46,7 +46,7 @@ sequenceDiagram
     note right of Proxy: No config found.<br/>Begin enrollment.
 
     Proxy->>Dashboard: POST /api/v1/device/begin<br/>{ client_id: random }
-    Dashboard-->>Proxy: { device_code: "ABCD-1234",<br/>verification_uri: "https://cordelia.seeddrill.io/enroll",<br/>expires_in: 600,<br/>interval: 5 }
+    Dashboard-->>Proxy: { device_code: "ABCD-1234",<br/>verification_uri: "https://cordelia.seeddrill.ai/enroll",<br/>expires_in: 600,<br/>interval: 5 }
 
     Proxy->>Browser: Open verification_uri
     note right of Proxy: "Open browser and enter<br/>code: ABCD-1234"
@@ -90,7 +90,7 @@ sequenceDiagram
     end
 
     Proxy->>Dashboard: POST /api/v1/device/poll<br/>{ device_code: "ABCD-1234" }
-    Dashboard-->>Proxy: { status: "complete",<br/>bearer_token: "ck_...",<br/>node_url: "https://cordelia.seeddrill.io",<br/>entity_id: "russell_wing" }
+    Dashboard-->>Proxy: { status: "complete",<br/>bearer_token: "ck_...",<br/>node_url: "https://cordelia.seeddrill.ai",<br/>entity_id: "russell_wing" }
 
     note right of Proxy: Prompt user for<br/>encryption passphrase
 

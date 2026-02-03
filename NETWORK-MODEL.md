@@ -1219,7 +1219,7 @@ On partition heal (previously unreachable peers become reachable):
 Bootnodes are the entry point. A new node connects to a bootnode, handshakes, gets peer-shared a list of relays, and begins building its peer table.
 
 Bootnodes are GSV-class relays with special properties:
-- **Well-known addresses** (DNS: boot1.cordelia.seeddrill.io)
+- **Well-known addresses** (DNS: boot1.cordelia.seeddrill.ai)
 - **High availability** (redundant, monitored)
 - **Not special in protocol** -- they're just relays that everyone knows about
 

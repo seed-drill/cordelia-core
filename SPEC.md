@@ -327,10 +327,10 @@ entity_id = "russell"
 listen_addr = "0.0.0.0:9474"
 
 [[network.bootnodes]]
-addr = "russell.cordelia.seeddrill.io:9474"
+addr = "russell.cordelia.seeddrill.ai:9474"
 
 [[network.bootnodes]]
-addr = "martin.cordelia.seeddrill.io:9474"
+addr = "martin.cordelia.seeddrill.ai:9474"
 
 [governor]
 hot_min = 2
