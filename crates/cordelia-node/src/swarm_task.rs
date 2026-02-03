@@ -89,7 +89,7 @@ fn is_owner(storage: &dyn Storage, group_id: &str, entity_id: &str) -> bool {
         .get_membership(group_id, entity_id)
         .ok()
         .flatten()
-        .map_or(false, |m| m.role == "owner")
+        .is_some_and(|m| m.role == "owner")
 }
 
 /// Merge incoming descriptors into local storage (LWW by updated_at).
@@ -922,7 +922,7 @@ fn handle_behaviour_event(
 
             let resp = GroupExchangeResponse {
                 groups: our_groups.to_vec(),
-                descriptors: build_descriptors(storage.as_ref(), &node_identity, &our_entity_id),
+                descriptors: build_descriptors(storage.as_ref(), node_identity, our_entity_id),
             };
             let _ = swarm
                 .behaviour_mut()
