@@ -112,6 +112,19 @@ pub struct AccessLogEntry {
     pub detail: Option<String>,
 }
 
+/// Device registration row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceRow {
+    pub device_id: String,
+    pub entity_id: String,
+    pub device_name: Option<String>,
+    pub device_type: String,
+    pub auth_token_hash: String,
+    pub created_at: String,
+    pub last_seen_at: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
 /// Storage trait for the P2P layer.
 pub trait Storage: Send + Sync {
     fn read_l1(&self, user_id: &str) -> Result<Option<Vec<u8>>>;
@@ -156,6 +169,12 @@ pub trait Storage: Send + Sync {
 
     // Storage stats (mempool diagnostics)
     fn storage_stats(&self) -> Result<StorageStats>;
+
+    // Device management (portal enrollment)
+    fn register_device(&self, device: &DeviceRow) -> Result<()>;
+    fn list_devices(&self, entity_id: &str) -> Result<Vec<DeviceRow>>;
+    fn revoke_device(&self, entity_id: &str, device_id: &str) -> Result<bool>;
+    fn get_device_by_token_hash(&self, token_hash: &str) -> Result<Option<DeviceRow>>;
 }
 
 /// Aggregate storage statistics for diagnostics.
@@ -275,6 +294,12 @@ impl SqliteStorage {
                 expected: 4,
                 found: version,
             });
+        }
+
+        // Migrate v4 -> v5: add devices table
+        if version == 4 {
+            conn.execute_batch(include_str!("schema_v5.sql"))?;
+            tracing::info!("storage: migrated schema v4 -> v5 (devices table)");
         }
 
         Ok(())
@@ -710,6 +735,85 @@ impl Storage for SqliteStorage {
         })
     }
 
+    fn register_device(&self, device: &DeviceRow) -> Result<()> {
+        let conn = self.db()?;
+        conn.execute(
+            "INSERT INTO devices (device_id, entity_id, device_name, device_type, auth_token_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(device_id) DO UPDATE SET
+               device_name = excluded.device_name,
+               device_type = excluded.device_type,
+               auth_token_hash = excluded.auth_token_hash",
+            params![
+                device.device_id,
+                device.entity_id,
+                device.device_name,
+                device.device_type,
+                device.auth_token_hash,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_devices(&self, entity_id: &str) -> Result<Vec<DeviceRow>> {
+        let conn = self.db()?;
+        let mut stmt = conn.prepare(
+            "SELECT device_id, entity_id, device_name, device_type, auth_token_hash,
+                    created_at, last_seen_at, revoked_at
+             FROM devices WHERE entity_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![entity_id], |row| {
+                Ok(DeviceRow {
+                    device_id: row.get(0)?,
+                    entity_id: row.get(1)?,
+                    device_name: row.get(2)?,
+                    device_type: row.get(3)?,
+                    auth_token_hash: row.get(4)?,
+                    created_at: row.get(5)?,
+                    last_seen_at: row.get(6)?,
+                    revoked_at: row.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn revoke_device(&self, entity_id: &str, device_id: &str) -> Result<bool> {
+        let conn = self.db()?;
+        let changes = conn.execute(
+            "UPDATE devices SET revoked_at = datetime('now')
+             WHERE device_id = ?1 AND entity_id = ?2 AND revoked_at IS NULL",
+            params![device_id, entity_id],
+        )?;
+        Ok(changes > 0)
+    }
+
+    fn get_device_by_token_hash(&self, token_hash: &str) -> Result<Option<DeviceRow>> {
+        let conn = self.db()?;
+        let result = conn
+            .query_row(
+                "SELECT device_id, entity_id, device_name, device_type, auth_token_hash,
+                        created_at, last_seen_at, revoked_at
+                 FROM devices WHERE auth_token_hash = ?1 AND revoked_at IS NULL",
+                params![token_hash],
+                |row| {
+                    Ok(DeviceRow {
+                        device_id: row.get(0)?,
+                        entity_id: row.get(1)?,
+                        device_name: row.get(2)?,
+                        device_type: row.get(3)?,
+                        auth_token_hash: row.get(4)?,
+                        created_at: row.get(5)?,
+                        last_seen_at: row.get(6)?,
+                        revoked_at: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(result)
+    }
+
     fn fts_search(&self, query: &str, limit: u32) -> Result<Vec<String>> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -1053,5 +1157,53 @@ mod tests {
 
         let expected = SqliteStorage::checksum(data);
         assert_eq!(row.checksum.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_device_crud() {
+        let (_dir, storage) = test_db();
+
+        // Need v5 schema for devices table
+        {
+            let conn = storage.db().unwrap();
+            conn.execute_batch(include_str!("schema_v5.sql")).unwrap();
+        }
+
+        let device = DeviceRow {
+            device_id: "dev-001".into(),
+            entity_id: "russell".into(),
+            device_name: Some("Russell's MacBook".into()),
+            device_type: "node".into(),
+            auth_token_hash: "abc123hash".into(),
+            created_at: String::new(),
+            last_seen_at: None,
+            revoked_at: None,
+        };
+
+        storage.register_device(&device).unwrap();
+
+        let devices = storage.list_devices("russell").unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].device_id, "dev-001");
+        assert_eq!(devices[0].device_name.as_deref(), Some("Russell's MacBook"));
+
+        // Lookup by token hash
+        let found = storage
+            .get_device_by_token_hash("abc123hash")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.device_id, "dev-001");
+
+        // Revoke
+        assert!(storage.revoke_device("russell", "dev-001").unwrap());
+        assert!(!storage.revoke_device("russell", "dev-001").unwrap()); // already revoked
+
+        // Revoked device not found by token hash
+        assert!(storage.get_device_by_token_hash("abc123hash").unwrap().is_none());
+
+        // But still listed (with revoked_at set)
+        let devices2 = storage.list_devices("russell").unwrap();
+        assert_eq!(devices2.len(), 1);
+        assert!(devices2[0].revoked_at.is_some());
     }
 }
