@@ -277,9 +277,8 @@ impl SqliteStorage {
         )?;
 
         if !table_exists {
-            // Empty database -- initialize schema v4
+            // Empty database -- initialize schema v4 then apply migrations
             conn.execute_batch(include_str!("schema_v4.sql"))?;
-            return Ok(());
         }
 
         let version: u32 = conn
