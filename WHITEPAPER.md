@@ -1,6 +1,6 @@
 # Cordelia: A Distributed Persistent Memory System for Autonomous Agents
 
-**Russell Wing, Claude (Opus 4.5)**
+**Russell Wing, Martin Stevens, Claude (Opus 4.5)**
 **Seed Drill (https://seeddrill.ai) -- January 2026**
 
 ---
