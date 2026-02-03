@@ -117,6 +117,27 @@ impl cordelia_storage::Storage for StorageClone {
     fn storage_stats(&self) -> cordelia_storage::Result<cordelia_storage::StorageStats> {
         self.0.storage_stats()
     }
+    fn register_device(
+        &self,
+        device: &cordelia_storage::DeviceRow,
+    ) -> cordelia_storage::Result<()> {
+        self.0.register_device(device)
+    }
+    fn list_devices(
+        &self,
+        entity_id: &str,
+    ) -> cordelia_storage::Result<Vec<cordelia_storage::DeviceRow>> {
+        self.0.list_devices(entity_id)
+    }
+    fn revoke_device(&self, entity_id: &str, device_id: &str) -> cordelia_storage::Result<bool> {
+        self.0.revoke_device(entity_id, device_id)
+    }
+    fn get_device_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> cordelia_storage::Result<Option<cordelia_storage::DeviceRow>> {
+        self.0.get_device_by_token_hash(token_hash)
+    }
 }
 
 pub fn expand_tilde(path: &str) -> PathBuf {

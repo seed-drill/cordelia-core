@@ -132,6 +132,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/groups/add_member", post(groups_add_member))
         .route("/api/v1/groups/remove_member", post(groups_remove_member))
         .route("/api/v1/groups/update_posture", post(groups_update_posture))
+        .route("/api/v1/devices/register", post(devices_register))
+        .route("/api/v1/devices/list", post(devices_list))
+        .route("/api/v1/devices/revoke", post(devices_revoke))
         .route("/api/v1/status", post(status))
         .route("/api/v1/peers", post(peers))
         .route("/api/v1/diagnostics", post(diagnostics))
@@ -283,6 +286,36 @@ pub struct GroupUpdatePostureRequest {
     pub group_id: String,
     pub entity_id: String,
     pub posture: String,
+}
+
+// ============================================================================
+// Device types
+// ============================================================================
+
+#[derive(Deserialize)]
+pub struct DeviceRegisterRequest {
+    pub device_id: String,
+    pub entity_id: String,
+    #[serde(default)]
+    pub device_name: Option<String>,
+    #[serde(default = "default_device_type")]
+    pub device_type: String,
+    pub auth_token_hash: String,
+}
+
+fn default_device_type() -> String {
+    "node".into()
+}
+
+#[derive(Deserialize)]
+pub struct DeviceListRequest {
+    pub entity_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct DeviceRevokeRequest {
+    pub entity_id: String,
+    pub device_id: String,
 }
 
 fn default_culture() -> String {
@@ -804,6 +837,126 @@ async fn groups_update_posture(
             Json(serde_json::json!({ "ok": true })).into_response()
         }
         Ok(false) => (StatusCode::NOT_FOUND, "member not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+// ============================================================================
+// Device handlers
+// ============================================================================
+
+async fn devices_register(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<DeviceRegisterRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    // Validate device_type
+    match req.device_type.as_str() {
+        "node" | "browser" | "mobile" => {}
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "invalid device_type: must be node, browser, or mobile",
+            )
+                .into_response()
+        }
+    }
+
+    let device = cordelia_storage::DeviceRow {
+        device_id: req.device_id.clone(),
+        entity_id: req.entity_id.clone(),
+        device_name: req.device_name.clone(),
+        device_type: req.device_type,
+        auth_token_hash: req.auth_token_hash,
+        created_at: String::new(), // Set by DB default
+        last_seen_at: None,
+        revoked_at: None,
+    };
+
+    match state.storage.register_device(&device) {
+        Ok(()) => {
+            tracing::info!(
+                device_id = req.device_id,
+                entity_id = req.entity_id,
+                "device: registered"
+            );
+            let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
+                entity_id: req.entity_id,
+                action: "register_device".into(),
+                resource_type: "device".into(),
+                resource_id: Some(req.device_id),
+                group_id: None,
+                detail: req.device_name,
+            });
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn devices_list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<DeviceListRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    match state.storage.list_devices(&req.entity_id) {
+        Ok(devices) => {
+            // Redact auth_token_hash from response
+            let redacted: Vec<serde_json::Value> = devices
+                .iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "device_id": d.device_id,
+                        "entity_id": d.entity_id,
+                        "device_name": d.device_name,
+                        "device_type": d.device_type,
+                        "created_at": d.created_at,
+                        "last_seen_at": d.last_seen_at,
+                        "revoked_at": d.revoked_at,
+                    })
+                })
+                .collect();
+            Json(serde_json::json!({ "devices": redacted })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn devices_revoke(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<DeviceRevokeRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    match state.storage.revoke_device(&req.entity_id, &req.device_id) {
+        Ok(true) => {
+            tracing::info!(
+                device_id = req.device_id,
+                entity_id = req.entity_id,
+                "device: revoked"
+            );
+            let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
+                entity_id: req.entity_id,
+                action: "revoke_device".into(),
+                resource_type: "device".into(),
+                resource_id: Some(req.device_id),
+                group_id: None,
+                detail: None,
+            });
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "device not found or already revoked").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
