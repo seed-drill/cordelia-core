@@ -13,6 +13,9 @@ primary_region = "lhr"
 [[services]]
   internal_port = 9474
   protocol = "tcp"
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
 
   [[services.ports]]
     port = 9474

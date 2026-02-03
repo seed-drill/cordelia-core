@@ -1,0 +1,29 @@
+name: Fly Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    concurrency: deploy-${{ matrix.app }}
+    strategy:
+      matrix:
+        include:
+          - app: cordelia-boot1
+            config: fly-boot1.toml
+            region: lhr
+          - app: cordelia-boot2
+            config: fly-boot2.toml
+            region: ams
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy ${{ matrix.app }}
+        run: flyctl deploy --config ${{ matrix.config }} --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
