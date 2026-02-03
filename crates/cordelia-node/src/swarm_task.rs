@@ -33,8 +33,7 @@ fn build_descriptors(
             let descs: Vec<GroupDescriptor> = groups
                 .into_iter()
                 .map(|g| {
-                    let checksum =
-                        GroupDescriptor::compute_checksum(&g.id, &g.culture);
+                    let checksum = GroupDescriptor::compute_checksum(&g.id, &g.culture);
                     let mut desc = GroupDescriptor {
                         id: g.id.clone(),
                         culture: g.culture,
@@ -56,12 +55,9 @@ fn build_descriptors(
                         desc.signature = Some(sig.clone());
 
                         // Persist so we don't re-sign every exchange
-                        if let Err(e) = storage.write_group_signature(
-                            &g.id,
-                            our_entity_id,
-                            &pubkey_hex,
-                            &sig,
-                        ) {
+                        if let Err(e) =
+                            storage.write_group_signature(&g.id, our_entity_id, &pubkey_hex, &sig)
+                        {
                             tracing::warn!(
                                 group_id = %g.id,
                                 "failed to persist group signature: {e}"
@@ -121,9 +117,7 @@ fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> 
         }
 
         // Verify signature if present
-        if let (Some(ref pubkey_hex), Some(ref sig_hex)) =
-            (&desc.owner_pubkey, &desc.signature)
-        {
+        if let (Some(ref pubkey_hex), Some(ref sig_hex)) = (&desc.owner_pubkey, &desc.signature) {
             if !verify_descriptor_signature(desc, pubkey_hex, sig_hex) {
                 tracing::warn!(
                     group_id = %desc.id,
@@ -212,11 +206,7 @@ fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> 
 }
 
 /// Verify an Ed25519 signature on a group descriptor.
-fn verify_descriptor_signature(
-    desc: &GroupDescriptor,
-    pubkey_hex: &str,
-    sig_hex: &str,
-) -> bool {
+fn verify_descriptor_signature(desc: &GroupDescriptor, pubkey_hex: &str, sig_hex: &str) -> bool {
     let Ok(pubkey_bytes) = hex::decode(pubkey_hex) else {
         return false;
     };
@@ -224,19 +214,21 @@ fn verify_descriptor_signature(
         return false;
     };
     let payload = desc.signing_payload();
-    let public_key = ring::signature::UnparsedPublicKey::new(
-        &ring::signature::ED25519,
-        &pubkey_bytes,
-    );
+    let public_key =
+        ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pubkey_bytes);
     public_key.verify(&payload, &sig_bytes).is_ok()
 }
 
 /// Check if broadcast_eagerness increased (informational only, soft policy).
 fn eagerness_increased(old_culture: &str, new_culture: &str) -> bool {
     fn parse_eagerness(culture: &str) -> u8 {
-        if culture.contains("\"eager\"") { 2 }
-        else if culture.contains("\"moderate\"") { 1 }
-        else { 0 } // passive or unknown
+        if culture.contains("\"eager\"") {
+            2
+        } else if culture.contains("\"moderate\"") {
+            1
+        } else {
+            0
+        } // passive or unknown
     }
     parse_eagerness(new_culture) > parse_eagerness(old_culture)
 }
@@ -949,10 +941,7 @@ fn handle_behaviour_event(
             if let Some(ref descs) = response.descriptors {
                 let merged = merge_descriptors(storage.as_ref(), descs);
                 if merged > 0 {
-                    tracing::info!(
-                        merged,
-                        "net: merged group descriptors from peer response"
-                    );
+                    tracing::info!(merged, "net: merged group descriptors from peer response");
                 }
             }
 

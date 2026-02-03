@@ -316,8 +316,8 @@ impl SqliteStorage {
         }
 
         // Re-read version after v4->v5 migration
-        let version: u32 = conn
-            .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+        let version: u32 =
+            conn.query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
                 row.get(0)
             })?;
 

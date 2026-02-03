@@ -150,8 +150,7 @@ impl GroupDescriptor {
 
     /// Canonical payload for signing: id + culture + updated_at.
     pub fn signing_payload(&self) -> Vec<u8> {
-        format!("{}\n{}\n{}", self.id, self.culture, self.updated_at)
-            .into_bytes()
+        format!("{}\n{}\n{}", self.id, self.culture, self.updated_at).into_bytes()
     }
 }
 
@@ -280,7 +279,8 @@ mod tests {
 
     #[test]
     fn test_group_exchange_with_descriptors() {
-        let checksum = GroupDescriptor::compute_checksum("g1", r#"{"broadcast_eagerness":"moderate"}"#);
+        let checksum =
+            GroupDescriptor::compute_checksum("g1", r#"{"broadcast_eagerness":"moderate"}"#);
         let req = GroupExchange {
             groups: vec!["g1".into()],
             descriptors: Some(vec![GroupDescriptor {

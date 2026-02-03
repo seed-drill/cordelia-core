@@ -777,7 +777,10 @@ async fn test_group_descriptor_replication() {
     // Read group on Node A -- should have owner signature (lazy-signed)
     let a_group = node_a.api_read_group("desc-g1").await.unwrap();
     let a_grp = &a_group["group"];
-    eprintln!("Node A group: {}", serde_json::to_string_pretty(a_grp).unwrap());
+    eprintln!(
+        "Node A group: {}",
+        serde_json::to_string_pretty(a_grp).unwrap()
+    );
 
     // Node A is owner (added by harness), so after first GroupExchange it should
     // have signed the descriptor and persisted signature to storage.
@@ -797,7 +800,10 @@ async fn test_group_descriptor_replication() {
     // Read group on Node B -- should have received the descriptor via GroupExchange.
     let b_group = node_b.api_read_group("desc-g1").await.unwrap();
     let b_grp = &b_group["group"];
-    eprintln!("Node B group: {}", serde_json::to_string_pretty(b_grp).unwrap());
+    eprintln!(
+        "Node B group: {}",
+        serde_json::to_string_pretty(b_grp).unwrap()
+    );
 
     // Both nodes should agree on culture
     assert_eq!(
@@ -883,8 +889,7 @@ async fn test_group_descriptor_via_relay() {
 
     // Relay should have the group in storage (learned from peers)
     assert!(
-        relay_group.get("group").is_some()
-            && !relay_group["group"].is_null(),
+        relay_group.get("group").is_some() && !relay_group["group"].is_null(),
         "Relay should have learned group metadata via descriptors"
     );
 
