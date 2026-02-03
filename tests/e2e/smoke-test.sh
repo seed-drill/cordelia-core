@@ -3,9 +3,11 @@
 # Designed to run INSIDE the orchestrator container (direct hostname access).
 # Can also run from the Docker host if DOCKER_EXEC=1 is set.
 #
-# Usage:
-#   docker exec cordelia-e2e-orchestrator ./smoke-test.sh
-#   ./smoke-test.sh  # from inside orchestrator
+# Run from inside the orchestrator container:
+#   docker exec cordelia-e2e-orchestrator bash /tests/smoke-test.sh
+#
+# The orchestrator sits on all Docker networks and resolves node hostnames
+# directly -- no published ports needed. Do NOT run from the Docker host.
 
 set -euo pipefail
 

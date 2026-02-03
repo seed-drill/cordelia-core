@@ -2,6 +2,10 @@
 # Monitor cordelia zoned Docker topology.
 # Usage: ./monitor.sh [--watch] [--item ITEM_ID]
 #
+# Run from the Docker host (NOT inside a container) -- uses docker port
+# to discover published ports. For in-container monitoring, use smoke-test.sh
+# inside the orchestrator instead.
+#
 # Shows: node health, peer counts, group membership, relay learned groups,
 # and optionally tracks item propagation across the network.
 
