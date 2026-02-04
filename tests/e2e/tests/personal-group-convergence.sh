@@ -98,8 +98,8 @@ done
 
 # Verify group exists on all three nodes
 for node in agent-alpha-1 keeper-alpha-1 keeper-alpha-2; do
-    GROUPS=$(api "$node" "groups/list" "{}" 2>/dev/null || echo "[]")
-    if echo "$GROUPS" | grep -q "$PG_ID"; then
+    GRPS=$(api "$node" "groups/list" "{}" 2>/dev/null || echo "[]")
+    if echo "$GRPS" | grep -q "$PG_ID"; then
         pass "personal group created on ${node}"
     else
         fail "personal group NOT found on ${node}"
