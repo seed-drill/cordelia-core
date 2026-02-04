@@ -82,53 +82,36 @@ fi
 # --- Test 1: Create personal group with taciturn culture --------------------
 
 TS=$(date +%s)
-PG_ID="personal-agent-alpha-1"
+PG_ID="personal-agent-alpha-1-${TS}"
 PG_ITEM="pg-item-${TS}"
 
-echo "[1] Creating personal group '${PG_ID}' on agent-alpha-1..."
-api "agent-alpha-1" "groups/create" \
-    "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-alpha-1 (personal)\",\"culture\":\"taciturn\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+echo "[1] Creating personal group '${PG_ID}' on agent + keepers..."
 
-# Verify group exists
-GROUPS=$(api "agent-alpha-1" "groups/list" "{}" 2>/dev/null || echo "[]")
-if echo "$GROUPS" | grep -q "$PG_ID"; then
-    pass "personal group created on agent-alpha-1"
-else
-    fail "personal group NOT found on agent-alpha-1"
-fi
-echo ""
+# Create group on the agent (owner) and both keepers (same pattern as existing tests:
+# groups must exist on each node for replication to work, since add_member has an
+# FK constraint requiring the entity in l1_hot).
+for node in agent-alpha-1 keeper-alpha-1 keeper-alpha-2; do
+    api "$node" "groups/create" \
+        "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-alpha-1 (personal)\",\"culture\":\"taciturn\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+done
 
-# --- Test 2: Add keeper members --------------------------------------------
-
-echo "[2] Adding keepers as members..."
-api "agent-alpha-1" "groups/add_member" \
-    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"keeper-alpha-1\",\"role\":\"member\"}" > /dev/null 2>&1
-
-api "agent-alpha-1" "groups/add_member" \
-    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"keeper-alpha-2\",\"role\":\"member\"}" > /dev/null 2>&1
-
-# Also add the agent itself as owner
-api "agent-alpha-1" "groups/add_member" \
-    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"agent-alpha-1\",\"role\":\"owner\"}" > /dev/null 2>&1
-
-# Wait for group membership to propagate via governor tick
-sleep 15
-
-# Verify group exists on keepers (group exchange should propagate it)
-for keeper in keeper-alpha-1 keeper-alpha-2; do
-    KGROUPS=$(api "$keeper" "groups/list" "{}" 2>/dev/null || echo "[]")
-    if echo "$KGROUPS" | grep -q "$PG_ID"; then
-        pass "personal group visible on ${keeper}"
+# Verify group exists on all three nodes
+for node in agent-alpha-1 keeper-alpha-1 keeper-alpha-2; do
+    GROUPS=$(api "$node" "groups/list" "{}" 2>/dev/null || echo "[]")
+    if echo "$GROUPS" | grep -q "$PG_ID"; then
+        pass "personal group created on ${node}"
     else
-        # Group might not have propagated yet via exchange -- not fatal
-        echo "  INFO: personal group not yet visible on ${keeper} (may propagate with item)"
+        fail "personal group NOT found on ${node}"
     fi
 done
+
+# Allow governor tick to register the new group
+sleep 10
 echo ""
 
-# --- Test 3: Write item to personal group ----------------------------------
+# --- Test 2: Write item to personal group ----------------------------------
 
-echo "[3] Writing item to personal group on agent-alpha-1..."
+echo "[2] Writing item to personal group on agent-alpha-1..."
 api "agent-alpha-1" "l2/write" \
     "{\"item_id\":\"${PG_ITEM}\",\"type\":\"entity\",\"data\":{\"test\":\"personal-group-convergence\",\"source\":\"agent-alpha-1\",\"ts\":\"${TS}\"},\"meta\":{\"visibility\":\"group\",\"group_id\":\"${PG_ID}\",\"owner_id\":\"agent-alpha-1\",\"author_id\":\"agent-alpha-1\",\"key_version\":1}}" > /dev/null
 
@@ -140,9 +123,9 @@ else
 fi
 echo ""
 
-# --- Test 4: Verify replication to keepers ----------------------------------
+# --- Test 3: Verify replication to keepers ----------------------------------
 
-echo "[4] Waiting for replication to keepers (taciturn sync, ~30-90s)..."
+echo "[3] Waiting for replication to keepers (taciturn sync, ~30-90s)..."
 
 if wait_for_item "keeper-alpha-1" "$PG_ITEM" 120; then
     pass "item replicated to keeper-alpha-1"
@@ -157,9 +140,9 @@ else
 fi
 echo ""
 
-# --- Test 5: Verify isolation (no leakage to other orgs) -------------------
+# --- Test 4: Verify isolation (no leakage to other orgs) -------------------
 
-echo "[5] Verifying isolation (15s window for potential leakage)..."
+echo "[4] Verifying isolation (15s window for potential leakage)..."
 sleep 15
 
 for node in keeper-bravo-1 boot1 edge-bravo-1; do
@@ -171,10 +154,10 @@ for node in keeper-bravo-1 boot1 edge-bravo-1; do
 done
 echo ""
 
-# --- Test 6: Second write (verify ongoing replication) ---------------------
+# --- Test 5: Second write (verify ongoing replication) ---------------------
 
 PG_ITEM2="pg-item2-${TS}"
-echo "[6] Second write to verify ongoing replication..."
+echo "[5] Second write to verify ongoing replication..."
 
 api "agent-alpha-1" "l2/write" \
     "{\"item_id\":\"${PG_ITEM2}\",\"type\":\"learning\",\"data\":{\"test\":\"personal-group-convergence-2\",\"source\":\"agent-alpha-1\"},\"meta\":{\"visibility\":\"group\",\"group_id\":\"${PG_ID}\",\"owner_id\":\"agent-alpha-1\",\"author_id\":\"agent-alpha-1\",\"key_version\":1}}" > /dev/null

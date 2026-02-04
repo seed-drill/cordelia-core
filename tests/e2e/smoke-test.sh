@@ -195,20 +195,16 @@ echo "[5] Personal group convergence..."
 PG_ID="personal-agent-${ORG_A}-1-${TS}"
 PG_ITEM="smoke-pg-${TS}"
 
-# Create personal group with taciturn culture on agent node
-api "agent-${ORG_A}-1" "groups/create" \
-    "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-${ORG_A}-1 (personal)\",\"culture\":\"taciturn\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+# Create personal group with taciturn culture on agent + both keepers
+# (groups must exist on each node for replication -- add_member has FK constraint
+# requiring the entity in l1_hot, so we create the group directly on each node)
+for node in "agent-${ORG_A}-1" "keeper-${ORG_A}-1" "keeper-${ORG_A}-2"; do
+    api "$node" "groups/create" \
+        "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-${ORG_A}-1 (personal)\",\"culture\":\"taciturn\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+done
 
-# Add keepers as members
-api "agent-${ORG_A}-1" "groups/add_member" \
-    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"keeper-${ORG_A}-1\",\"role\":\"member\"}" > /dev/null 2>&1
-api "agent-${ORG_A}-1" "groups/add_member" \
-    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"keeper-${ORG_A}-2\",\"role\":\"member\"}" > /dev/null 2>&1
-api "agent-${ORG_A}-1" "groups/add_member" \
-    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"agent-${ORG_A}-1\",\"role\":\"owner\"}" > /dev/null 2>&1
-
-# Wait for group membership to propagate
-sleep 15
+# Allow governor tick to register the new group
+sleep 10
 
 # Write item to personal group
 api "agent-${ORG_A}-1" "l2/write" \
