@@ -8,15 +8,16 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl jq dnsutils iputils-ping net-tools procps \
+    bash curl jq dnsutils iputils-ping net-tools procps gnuplot-nox bc \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tests
 
-# Copy test scripts and helpers
+# Copy test scripts, helpers, and libraries
 COPY monitor.sh test-zoned-replication.sh smoke-test.sh topology.env ./
-COPY tests/personal-group-convergence.sh ./tests/
-RUN chmod +x *.sh tests/*.sh
+COPY lib/ ./lib/
+COPY tests/ ./tests/
+RUN chmod +x *.sh tests/*.sh lib/*.sh
 
 # Default bearer token matches Dockerfile.test
 ENV BEARER_TOKEN=test-token-fixed

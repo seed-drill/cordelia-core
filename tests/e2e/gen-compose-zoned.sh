@@ -413,9 +413,12 @@ done
       dockerfile: Dockerfile.orchestrator
     hostname: orchestrator
     container_name: cordelia-e2e-orchestrator
+    volumes:
+      - ${DIR}/reports:/tests/reports
     environment:
       - BEARER_TOKEN=${BEARER_TOKEN}
       - BACKBONE_COUNT=${BACKBONE_COUNT}
+      - BACKBONE_PERSONAL=${BACKBONE_PERSONAL}
       - ORG_SPEC=${ORG_SPEC}
     networks:
       - backbone
