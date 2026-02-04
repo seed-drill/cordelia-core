@@ -323,7 +323,21 @@ impl SqliteStorage {
 
         // Migrate v5 -> v6: add owner signing fields to groups (R4-030)
         if version == 5 {
-            conn.execute_batch(include_str!("schema_v6.sql"))?;
+            // Check if owner_id column already exists (v4 base schema includes it)
+            let has_owner_id: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('groups') WHERE name = 'owner_id'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_owner_id {
+                // Columns already present, just bump version
+                conn.execute(
+                    "UPDATE schema_version SET version = 6, migrated_at = datetime('now') WHERE version = 5",
+                    [],
+                )?;
+            } else {
+                conn.execute_batch(include_str!("schema_v6.sql"))?;
+            }
             tracing::info!("storage: migrated schema v5 -> v6 (group descriptor signing)");
         }
 

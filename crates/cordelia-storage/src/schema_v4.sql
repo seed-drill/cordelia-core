@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
   migrated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-INSERT INTO schema_version (version) VALUES (4);
+INSERT INTO schema_version (version) VALUES (6);
 
 -- FTS5
 CREATE VIRTUAL TABLE IF NOT EXISTS l2_fts USING fts5(
