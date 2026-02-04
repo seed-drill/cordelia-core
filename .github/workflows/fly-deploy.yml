@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Deploy ${{ matrix.app }}
@@ -20,8 +23,8 @@ jobs:
             config: fly-boot2.toml
             region: ams
     steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # master
 
       - name: Deploy ${{ matrix.app }}
         run: flyctl deploy --config ${{ matrix.config }} --remote-only

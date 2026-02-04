@@ -18,12 +18,12 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@6bc82e05fd0ea64601dd4b465378bbcf57de0314 # v4
         with:
           languages: rust
           queries: security-and-quality
@@ -32,6 +32,6 @@ jobs:
         run: cargo build --workspace --release
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@6bc82e05fd0ea64601dd4b465378bbcf57de0314 # v4
         with:
           category: "/language:rust"
