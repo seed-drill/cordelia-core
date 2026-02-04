@@ -189,6 +189,53 @@ else
 fi
 echo ""
 
+# --- Test 5: Personal group convergence ------------------------------------
+
+echo "[5] Personal group convergence..."
+PG_ID="personal-agent-${ORG_A}-1-${TS}"
+PG_ITEM="smoke-pg-${TS}"
+
+# Create personal group with taciturn culture on agent node
+api "agent-${ORG_A}-1" "groups/create" \
+    "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-${ORG_A}-1 (personal)\",\"culture\":\"taciturn\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+
+# Add keepers as members
+api "agent-${ORG_A}-1" "groups/add_member" \
+    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"keeper-${ORG_A}-1\",\"role\":\"member\"}" > /dev/null 2>&1
+api "agent-${ORG_A}-1" "groups/add_member" \
+    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"keeper-${ORG_A}-2\",\"role\":\"member\"}" > /dev/null 2>&1
+api "agent-${ORG_A}-1" "groups/add_member" \
+    "{\"group_id\":\"${PG_ID}\",\"entity_id\":\"agent-${ORG_A}-1\",\"role\":\"owner\"}" > /dev/null 2>&1
+
+# Wait for group membership to propagate
+sleep 15
+
+# Write item to personal group
+api "agent-${ORG_A}-1" "l2/write" \
+    "{\"item_id\":\"${PG_ITEM}\",\"type\":\"entity\",\"data\":{\"test\":\"personal-group-smoke\",\"source\":\"agent-${ORG_A}-1\"},\"meta\":{\"visibility\":\"group\",\"group_id\":\"${PG_ID}\",\"owner_id\":\"agent-${ORG_A}-1\",\"author_id\":\"agent-${ORG_A}-1\",\"key_version\":1}}" > /dev/null
+
+# Verify replication to keeper (taciturn: 30s sync interval in test config)
+if wait_for_item "keeper-${ORG_A}-1" "$PG_ITEM" 120; then
+    pass "personal group item replicated to ${ORG_A} keeper-1"
+else
+    fail "personal group item did NOT replicate to ${ORG_A} keeper-1"
+fi
+
+if wait_for_item "keeper-${ORG_A}-2" "$PG_ITEM" 120; then
+    pass "personal group item replicated to ${ORG_A} keeper-2"
+else
+    fail "personal group item did NOT replicate to ${ORG_A} keeper-2"
+fi
+
+# Verify isolation: personal group item should NOT reach other orgs
+sleep 15
+if assert_no_item "keeper-${ORG_B}-1" "$PG_ITEM"; then
+    pass "personal group item correctly absent from ${ORG_B}"
+else
+    fail "personal group item LEAKED to ${ORG_B}"
+fi
+echo ""
+
 # --- Results ----------------------------------------------------------------
 
 echo "==========================================="

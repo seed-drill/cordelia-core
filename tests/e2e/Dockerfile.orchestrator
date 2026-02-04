@@ -15,7 +15,8 @@ WORKDIR /tests
 
 # Copy test scripts and helpers
 COPY monitor.sh test-zoned-replication.sh smoke-test.sh topology.env ./
-RUN chmod +x *.sh
+COPY tests/personal-group-convergence.sh ./tests/
+RUN chmod +x *.sh tests/*.sh
 
 # Default bearer token matches Dockerfile.test
 ENV BEARER_TOKEN=test-token-fixed

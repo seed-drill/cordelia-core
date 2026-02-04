@@ -30,20 +30,22 @@ api_diag() {
     api_post "$1" "/api/v1/diagnostics"
 }
 
-# api_write_item HOST ID TYPE DATA_BASE64 GROUP_ID
+# api_write_item HOST ITEM_ID TYPE DATA_JSON GROUP_ID
 api_write_item() {
-    local host="$1" id="$2" type="$3" data="$4" group="$5"
+    local host="$1" item_id="$2" type="$3" data="$4" group="$5"
     local body
     body=$(cat <<EOF
 {
-    "id": "${id}",
-    "item_type": "${type}",
-    "data": "${data}",
-    "visibility": "group",
-    "group_id": "${group}",
-    "owner_id": "e2e-test",
-    "author_id": "e2e-test",
-    "key_version": 1
+    "item_id": "${item_id}",
+    "type": "${type}",
+    "data": ${data},
+    "meta": {
+        "visibility": "group",
+        "group_id": "${group}",
+        "owner_id": "e2e-test",
+        "author_id": "e2e-test",
+        "key_version": 1
+    }
 }
 EOF
 )
@@ -56,13 +58,13 @@ api_read_item() {
     api_post "$host" "/api/v1/l2/read" "{\"item_id\": \"${id}\"}"
 }
 
-# api_create_group HOST ID NAME CULTURE
+# api_create_group HOST GROUP_ID NAME CULTURE
 api_create_group() {
-    local host="$1" id="$2" name="$3" culture="${4:-chatty}"
+    local host="$1" group_id="$2" name="$3" culture="${4:-chatty}"
     local body
     body=$(cat <<EOF
 {
-    "id": "${id}",
+    "group_id": "${group_id}",
     "name": "${name}",
     "culture": "${culture}",
     "security_policy": "standard"
