@@ -196,29 +196,31 @@ echo "[5] Personal group convergence..."
 PG_ID="personal-agent-${ORG_A}-1-${TS}"
 PG_ITEM="smoke-pg-${TS}"
 
-# Create personal group with taciturn culture on agent + both keepers
-# (groups must exist on each node for replication -- add_member has FK constraint
-# requiring the entity in l1_hot, so we create the group directly on each node)
-for node in "agent-${ORG_A}-1" "keeper-${ORG_A}-1" "keeper-${ORG_A}-2"; do
+# Create personal group with chatty culture on agent, edges, and keepers.
+# Edge (relay) nodes MUST have the group for group_intersection routing --
+# without it, relays can't compute group_intersection and won't forward items.
+for node in "agent-${ORG_A}-1" "edge-${ORG_A}-1" "edge-${ORG_A}-2" "keeper-${ORG_A}-1" "keeper-${ORG_A}-2"; do
     api "$node" "groups/create" \
-        "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-${ORG_A}-1 (personal)\",\"culture\":\"taciturn\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+        "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-${ORG_A}-1 (personal)\",\"culture\":\"chatty\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
 done
 
-# Allow governor tick to register the new group
-sleep 10
+# Wait for group exchange so group_intersection is computed on all peers.
+# GROUP_EXCHANGE_TICKS=6, governor tick=10s -> exchange every 60s.
+echo "  Waiting 65s for group exchange..."
+sleep 65
 
 # Write item to personal group
 api "agent-${ORG_A}-1" "l2/write" \
     "{\"item_id\":\"${PG_ITEM}\",\"type\":\"entity\",\"data\":{\"test\":\"personal-group-smoke\",\"source\":\"agent-${ORG_A}-1\"},\"meta\":{\"visibility\":\"group\",\"group_id\":\"${PG_ID}\",\"owner_id\":\"agent-${ORG_A}-1\",\"author_id\":\"agent-${ORG_A}-1\",\"key_version\":1}}" > /dev/null
 
-# Verify replication to keeper (taciturn: 30s sync interval in test config)
-if wait_for_item "keeper-${ORG_A}-1" "$PG_ITEM" 120; then
+# Verify replication to keeper (chatty: eager push via edge relay)
+if wait_for_item "keeper-${ORG_A}-1" "$PG_ITEM" 180; then
     pass "personal group item replicated to ${ORG_A} keeper-1"
 else
     fail "personal group item did NOT replicate to ${ORG_A} keeper-1"
 fi
 
-if wait_for_item "keeper-${ORG_A}-2" "$PG_ITEM" 120; then
+if wait_for_item "keeper-${ORG_A}-2" "$PG_ITEM" 180; then
     pass "personal group item replicated to ${ORG_A} keeper-2"
 else
     fail "personal group item did NOT replicate to ${ORG_A} keeper-2"

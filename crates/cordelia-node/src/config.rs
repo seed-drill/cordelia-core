@@ -192,6 +192,7 @@ impl Default for GovernorSection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicationSection {
+    /// Deprecated: moderate maps to chatty. Ignored; retained for config compat.
     #[serde(default = "default_300")]
     pub sync_interval_moderate_secs: u64,
     #[serde(default = "default_900")]
@@ -205,7 +206,7 @@ pub struct ReplicationSection {
 impl Default for ReplicationSection {
     fn default() -> Self {
         Self {
-            sync_interval_moderate_secs: cordelia_protocol::SYNC_INTERVAL_MODERATE_SECS,
+            sync_interval_moderate_secs: 300, // deprecated, ignored
             sync_interval_taciturn_secs: cordelia_protocol::SYNC_INTERVAL_TACITURN_SECS,
             tombstone_retention_days: cordelia_protocol::TOMBSTONE_RETENTION_DAYS,
             max_batch_size: cordelia_protocol::MAX_BATCH_SIZE,
@@ -251,7 +252,7 @@ fn default_churn_fraction() -> f64 {
     0.2
 }
 fn default_300() -> u64 {
-    cordelia_protocol::SYNC_INTERVAL_MODERATE_SECS
+    300 // deprecated moderate interval, retained for config compat
 }
 fn default_900() -> u64 {
     cordelia_protocol::SYNC_INTERVAL_TACITURN_SECS

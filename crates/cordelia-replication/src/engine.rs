@@ -1,6 +1,6 @@
 //! Replication engine -- coordinates culture dispatch and receive.
 
-use cordelia_protocol::messages::{FetchedItem, ItemHeader};
+use cordelia_protocol::messages::FetchedItem;
 use cordelia_protocol::GroupId;
 use cordelia_storage::{L2ItemWrite, Storage};
 
@@ -22,11 +22,6 @@ pub enum OutboundAction {
     BroadcastItem {
         group_id: GroupId,
         item: FetchedItem,
-    },
-    /// Send header to all hot group peers (NotifyAndFetch).
-    BroadcastHeader {
-        group_id: GroupId,
-        header: ItemHeader,
     },
     /// No action (Passive).
     None,
@@ -78,17 +73,6 @@ impl ReplicationEngine {
                     parent_id,
                     is_copy,
                     updated_at: chrono::Utc::now().to_rfc3339(),
-                },
-            },
-            ReplicationStrategy::NotifyAndFetch => OutboundAction::BroadcastHeader {
-                group_id: group_id.to_string(),
-                header: ItemHeader {
-                    item_id: item_id.to_string(),
-                    item_type: item_type.to_string(),
-                    checksum: cs,
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                    author_id: self.entity_id.clone(),
-                    is_deletion: false,
                 },
             },
             ReplicationStrategy::Passive => OutboundAction::None,
@@ -186,11 +170,8 @@ impl ReplicationEngine {
     pub fn sync_interval(&self, culture: &GroupCulture) -> u64 {
         culture
             .strategy()
-            .sync_interval_secs(
-                self.config.sync_interval_moderate_secs,
-                self.config.sync_interval_taciturn_secs,
-            )
-            .unwrap_or(self.config.sync_interval_moderate_secs)
+            .sync_interval_secs(self.config.sync_interval_taciturn_secs)
+            .unwrap_or(cordelia_protocol::EAGER_PUSH_INTERVAL_SECS)
     }
 
     /// Max batch size for fetch requests.
@@ -242,9 +223,13 @@ mod tests {
     }
 
     #[test]
-    fn test_on_local_write_moderate() {
+    fn test_on_local_write_moderate_maps_to_chatty() {
         let engine = default_engine();
-        let culture = GroupCulture::default();
+        // "moderate" is deprecated and maps to EagerPush (chatty)
+        let culture = GroupCulture {
+            broadcast_eagerness: "moderate".into(),
+            ..Default::default()
+        };
 
         let action = engine.on_local_write(
             "seed-drill",
@@ -258,11 +243,11 @@ mod tests {
         );
 
         match action {
-            OutboundAction::BroadcastHeader { group_id, header } => {
+            OutboundAction::BroadcastItem { group_id, item } => {
                 assert_eq!(group_id, "seed-drill");
-                assert_eq!(header.item_id, "item-1");
+                assert_eq!(item.item_id, "item-1");
             }
-            _ => panic!("expected BroadcastHeader"),
+            _ => panic!("expected BroadcastItem (moderate maps to chatty)"),
         }
     }
 

@@ -92,5 +92,5 @@ EOF
 # hot_peer_count HOST -- returns count of hot peers
 hot_peer_count() {
     local host="$1"
-    api_peers "$host" | jq '[.[] | select(.state == "hot")] | length' 2>/dev/null || echo 0
+    api_peers "$host" | jq '[.peers[] | select(.state == "hot")] | length' 2>/dev/null || echo 0
 }

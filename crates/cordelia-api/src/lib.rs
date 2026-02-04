@@ -91,6 +91,8 @@ pub struct PeerDetail {
     pub rtt_ms: Option<f64>,
     pub items_delivered: u64,
     pub groups: Vec<String>,
+    pub group_intersection: Vec<String>,
+    pub is_relay: bool,
     pub protocol_version: u16,
 }
 
@@ -319,7 +321,7 @@ pub struct DeviceRevokeRequest {
 }
 
 fn default_culture() -> String {
-    r#"{"broadcast_eagerness":"moderate"}"#.into()
+    r#"{"broadcast_eagerness":"chatty"}"#.into()
 }
 
 fn default_security_policy() -> String {

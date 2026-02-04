@@ -283,7 +283,6 @@ impl TestNodeBuilder {
                 churn_fraction: 0.0,
             },
             replication_config: ReplicationConfig {
-                sync_interval_moderate_secs: 5,
                 sync_interval_taciturn_secs: 15,
                 tombstone_retention_days: 7,
                 max_batch_size: 100,

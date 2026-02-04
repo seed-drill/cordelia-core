@@ -121,6 +121,9 @@ GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
 
 mkdir -p "$OUT_DIR"
 
+# Write shared bearer token file for all nodes
+echo -n "${BEARER_TOKEN}" > "$OUT_DIR/node-token"
+
 # ============================================================================
 # Parse org spec into arrays
 # Format: name:edges:keepers[:personals]
@@ -240,6 +243,7 @@ gen_service() {
     container_name: cordelia-e2e-${hostname}
     volumes:
       - ${OUT_DIR}/config-${hostname}.toml:/home/cordelia/.cordelia/config.toml:ro
+      - ${OUT_DIR}/node-token:/home/cordelia/.cordelia/node-token:ro
     ports:
       - "${api_port}:9473"
     environment:
@@ -409,9 +413,12 @@ done
       dockerfile: Dockerfile.orchestrator
     hostname: orchestrator
     container_name: cordelia-e2e-orchestrator
+    volumes:
+      - ${DIR}/reports:/tests/reports
     environment:
       - BEARER_TOKEN=${BEARER_TOKEN}
       - BACKBONE_COUNT=${BACKBONE_COUNT}
+      - BACKBONE_PERSONAL=${BACKBONE_PERSONAL}
       - ORG_SPEC=${ORG_SPEC}
     networks:
       - backbone

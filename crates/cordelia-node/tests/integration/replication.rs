@@ -45,12 +45,13 @@ fn test_item_replication_chatty() {
     });
 }
 
-/// Write on node A, verify sync replication to node B (moderate culture uses anti-entropy).
+/// Write on node A, verify replication to node B.
+/// "moderate" culture is deprecated and maps to chatty (eager push).
 #[tokio::test]
-async fn test_item_replication_moderate() {
+async fn test_item_replication_moderate_maps_to_chatty() {
     let groups = vec!["mod-group".into()];
 
-    // Build 2 nodes with moderate sync interval = 5s for faster testing
+    // Build 2 nodes -- moderate now uses eager push (same as chatty)
     let node_a = TestNodeBuilder::new("mod-a")
         .role(NodeRole::Relay)
         .groups(groups.clone())
@@ -95,7 +96,7 @@ async fn test_item_replication_moderate() {
         .await
         .unwrap();
 
-    // Wait for anti-entropy sync (moderate interval = 5s in test config)
+    // Wait for replication (moderate now maps to chatty/eager push)
     node_b
         .wait_item("item-mod-001", Duration::from_secs(60))
         .await

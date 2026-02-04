@@ -2,8 +2,11 @@
 //!
 //! Dispatches based on group culture:
 //!   - EagerPush (chatty): send full item to all hot group peers
-//!   - NotifyAndFetch (moderate): send header, peers pull on demand
 //!   - Passive (taciturn): do nothing, peers discover on periodic sync
+//!
+//! "moderate" is accepted as a culture string for backward compatibility
+//! but maps to EagerPush (chatty). See docs/design/replication-routing.md
+//! Section 10 for rationale.
 //!
 //! Anti-entropy sync runs per-group at culture-determined intervals.
 
@@ -20,19 +23,16 @@ pub use engine::ReplicationEngine;
 pub enum ReplicationStrategy {
     /// Chatty: send full item to all hot group peers immediately.
     EagerPush,
-    /// Moderate: send header only, peers pull on demand.
-    NotifyAndFetch,
     /// Taciturn: do nothing, peers discover via periodic sync.
     Passive,
 }
 
 /// Anti-entropy sync intervals per strategy.
 impl ReplicationStrategy {
-    pub fn sync_interval_secs(&self, moderate_secs: u64, taciturn_secs: u64) -> Option<u64> {
+    pub fn sync_interval_secs(&self, taciturn_secs: u64) -> Option<u64> {
         match self {
-            // Chatty: real-time, no periodic sync needed (but run fast interval for safety)
+            // Chatty: real-time push + fast anti-entropy safety net
             ReplicationStrategy::EagerPush => Some(cordelia_protocol::EAGER_PUSH_INTERVAL_SECS),
-            ReplicationStrategy::NotifyAndFetch => Some(moderate_secs),
             ReplicationStrategy::Passive => Some(taciturn_secs),
         }
     }
@@ -41,7 +41,6 @@ impl ReplicationStrategy {
 /// Configuration for the replication engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicationConfig {
-    pub sync_interval_moderate_secs: u64,
     pub sync_interval_taciturn_secs: u64,
     pub tombstone_retention_days: u32,
     pub max_batch_size: u32,
@@ -50,7 +49,6 @@ pub struct ReplicationConfig {
 impl Default for ReplicationConfig {
     fn default() -> Self {
         Self {
-            sync_interval_moderate_secs: cordelia_protocol::SYNC_INTERVAL_MODERATE_SECS,
             sync_interval_taciturn_secs: cordelia_protocol::SYNC_INTERVAL_TACITURN_SECS,
             tombstone_retention_days: cordelia_protocol::TOMBSTONE_RETENTION_DAYS,
             max_batch_size: cordelia_protocol::MAX_BATCH_SIZE,
@@ -71,17 +69,19 @@ pub struct GroupCulture {
 }
 
 fn default_eagerness() -> String {
-    "moderate".into()
+    "chatty".into()
 }
 
 impl GroupCulture {
     /// Determine replication strategy from culture.
+    ///
+    /// "moderate" is accepted for backward compatibility but maps to
+    /// EagerPush (chatty). See docs/design/replication-routing.md Section 10.
     pub fn strategy(&self) -> ReplicationStrategy {
         match self.broadcast_eagerness.as_str() {
-            "chatty" => ReplicationStrategy::EagerPush,
-            "moderate" => ReplicationStrategy::NotifyAndFetch,
+            "chatty" | "moderate" => ReplicationStrategy::EagerPush,
             "taciturn" => ReplicationStrategy::Passive,
-            _ => ReplicationStrategy::NotifyAndFetch, // safe default
+            _ => ReplicationStrategy::EagerPush, // safe default
         }
     }
 }
@@ -89,7 +89,7 @@ impl GroupCulture {
 impl Default for GroupCulture {
     fn default() -> Self {
         Self {
-            broadcast_eagerness: "moderate".into(),
+            broadcast_eagerness: "chatty".into(),
             ttl_default: None,
             notification_policy: None,
             departure_policy: None,
@@ -154,8 +154,16 @@ mod tests {
         };
         assert_eq!(chatty.strategy(), ReplicationStrategy::EagerPush);
 
-        let moderate = GroupCulture::default();
-        assert_eq!(moderate.strategy(), ReplicationStrategy::NotifyAndFetch);
+        // "moderate" maps to EagerPush (deprecated, backward compat)
+        let moderate = GroupCulture {
+            broadcast_eagerness: "moderate".into(),
+            ..Default::default()
+        };
+        assert_eq!(moderate.strategy(), ReplicationStrategy::EagerPush);
+
+        // Default culture is chatty
+        let default = GroupCulture::default();
+        assert_eq!(default.strategy(), ReplicationStrategy::EagerPush);
 
         let taciturn = GroupCulture {
             broadcast_eagerness: "taciturn".into(),
@@ -244,15 +252,11 @@ mod tests {
     #[test]
     fn test_sync_intervals() {
         assert_eq!(
-            ReplicationStrategy::EagerPush.sync_interval_secs(300, 900),
+            ReplicationStrategy::EagerPush.sync_interval_secs(900),
             Some(60)
         );
         assert_eq!(
-            ReplicationStrategy::NotifyAndFetch.sync_interval_secs(300, 900),
-            Some(300)
-        );
-        assert_eq!(
-            ReplicationStrategy::Passive.sync_interval_secs(300, 900),
+            ReplicationStrategy::Passive.sync_interval_secs(900),
             Some(900)
         );
     }

@@ -211,7 +211,19 @@ pub async fn run_governor_loop(
                 // Periodic group exchange with active peers
                 if tick_count.is_multiple_of(group_exchange_every) {
                     let active_peers = pool.active_peers().await;
-                    let groups = shared_groups.read().await.clone();
+                    let mut groups = shared_groups.read().await.clone();
+
+                    // Relay nodes: advertise learned groups so peers can compute
+                    // group_intersection and discover the relay handles these groups.
+                    if let Some(ref learned) = relay_learned_groups {
+                        let learned_set = learned.read().await;
+                        for g in learned_set.iter() {
+                            if !groups.contains(g) {
+                                groups.push(g.clone());
+                            }
+                        }
+                    }
+
                     for peer in active_peers {
                         let cmd_tx = cmd_tx.clone();
                         let pool = pool.clone();
@@ -336,7 +348,16 @@ pub async fn run_governor_loop(
                         let cmd_tx = cmd_tx.clone();
                         let pool = pool.clone();
                         let governor = governor.clone();
-                        let groups = shared_groups.read().await.clone();
+                        let mut groups = shared_groups.read().await.clone();
+                        // Include relay learned groups in exchange (same as periodic)
+                        if let Some(ref learned) = relay_learned_groups {
+                            let learned_set = learned.read().await;
+                            for g in learned_set.iter() {
+                                if !groups.contains(g) {
+                                    groups.push(g.clone());
+                                }
+                            }
+                        }
                         let relay_learned = relay_learned_groups.clone();
                         let peer_is_relay = is_relay;
                         tokio::spawn(async move {

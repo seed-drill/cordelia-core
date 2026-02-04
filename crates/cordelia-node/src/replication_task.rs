@@ -123,13 +123,6 @@ pub async fn run_replication_loop(
                                     );
                                     write_buffer.entry(group_id).or_default().push(item);
                                 }
-                                cordelia_replication::engine::OutboundAction::BroadcastHeader { group_id, header } => {
-                                    tracing::debug!(
-                                        item_id = header.item_id,
-                                        group = group_id.as_str(),
-                                        "repl: moderate culture, anti-entropy only"
-                                    );
-                                }
                                 cordelia_replication::engine::OutboundAction::None => {
                                     tracing::debug!(
                                         item_id = &notif.item_id,
@@ -603,12 +596,12 @@ fn load_group_culture(storage: &Arc<dyn Storage>, group_id: &str) -> Option<Grou
         Ok(None) => {
             tracing::warn!(
                 group = group_id,
-                "repl: group not found in storage, defaulting to moderate"
+                "repl: group not found in storage, skipping sync"
             );
             return None;
         }
         Err(e) => {
-            tracing::warn!(group = group_id, error = %e, "repl: failed to read group, defaulting to moderate");
+            tracing::warn!(group = group_id, error = %e, "repl: failed to read group, skipping sync");
             return None;
         }
     };
