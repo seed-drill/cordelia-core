@@ -224,8 +224,10 @@ periodically and reconciles items between peers.
 | Culture | Strategy | Push on write? | Sync interval |
 |---------|----------|---------------|---------------|
 | **Chatty** | EagerPush | Yes | 60s (safety net) |
-| **Moderate** | NotifyAndFetch | Header only | `sync_interval_moderate_secs` (default 300s) |
 | **Taciturn** | Passive | No | `sync_interval_taciturn_secs` (default 900s) |
+
+> **Note**: "moderate" is accepted as a culture string for backward compatibility
+> but maps to EagerPush (chatty). See Section 10 for deprecation rationale.
 
 **Important**: The `sync_base_tick` fires at `EAGER_PUSH_INTERVAL_SECS` (60s).
 Per-group deadlines are tracked separately, but the effective minimum sync
@@ -417,6 +419,117 @@ or explicit group exchange rather than waiting for the periodic tick.
 7. **Relays advertise learned groups**: Dynamic relays include
    `relay_learned_groups` in group exchange so peers can compute correct
    `group_intersection` for anti-entropy targeting
+
+---
+
+## 10. Moderate Culture Deprecation
+
+**Decision**: Moderate culture is deprecated. Groups with `broadcast_eagerness:
+"moderate"` are treated as chatty (EagerPush). The string is accepted for
+backward compatibility but produces identical behaviour to chatty.
+
+### 10.1 Background
+
+The original design had three cultures:
+
+| Culture | Push behaviour | Anti-entropy |
+|---------|---------------|-------------|
+| **Chatty** | Full item push to all group peers | 60s |
+| **Moderate** | Header-only notification; peers fetch on demand | 300s |
+| **Taciturn** | No push; rely on anti-entropy only | 900s |
+
+Moderate was intended as a bandwidth-saving middle ground: push only headers
+(item ID + checksum), let interested peers fetch the full blob. This would
+reduce write amplification for groups where not every peer needs every item
+immediately.
+
+### 10.2 Why Moderate Was Functionally Broken
+
+Analysis at 341 nodes revealed that moderate had the same multi-hop convergence
+failure as taciturn, for a different reason:
+
+1. **BroadcastHeader handler was a no-op.** The `BroadcastHeader` variant in
+   `OutboundAction` was dispatched by the replication engine, but the handler
+   in `replication_task.rs` only logged the event -- it never actually sent
+   headers to peers. Moderate was therefore functionally identical to taciturn
+   beyond the writer's direct peers.
+
+2. **No relay re-push for fetched items.** Even if header notification worked,
+   the relay re-push mechanism only fires in the `MemoryPush` request handler
+   (swarm_task.rs), not in the fetch response handler. When a relay fetches an
+   item after receiving a header notification, it stores the item but never
+   pushes it onward. This means moderate convergence stalls at hop 1 -- the
+   same multi-hop failure mode as taciturn.
+
+3. **Anti-entropy was the actual convergence path.** With push notification
+   non-functional, moderate groups converged via anti-entropy sync at 300s
+   intervals. This is strictly slower than chatty (60s) with no offsetting
+   benefit, since the "bandwidth savings" from header-only push never
+   materialised.
+
+### 10.3 Why Chatty Is Sufficient
+
+The bandwidth argument for moderate assumed large items where header-only
+notification would save significant transfer. In practice:
+
+- **Item size limit is 16 KB** (`max_item_bytes`). At this size, the overhead
+  of a separate header notification + fetch round-trip exceeds the cost of
+  just pushing the full item.
+- **Chatty push is epidemic dissemination**: the writer pushes to all active
+  group peers, and relays re-push to their group peers. This gives O(1) hop
+  convergence within an org and O(diameter) across orgs -- without needing
+  headers, fetch requests, or relay re-push logic for fetched items.
+- **Anti-entropy at 60s** acts as a safety net for any items missed during
+  push (network partitions, peer churn, race conditions).
+
+### 10.4 Comparison to Packet Routing (OSPF)
+
+The 4-tier sync target priority (Section 6.2) is sometimes compared to OSPF
+routing. The key differences explain why moderate's complexity wasn't justified:
+
+| Aspect | OSPF | Cordelia |
+|--------|------|---------|
+| **Goal** | Route one packet to one destination | Replicate item to ALL group members |
+| **Topology knowledge** | Full link-state database | Local peer pool only |
+| **Convergence** | Route table convergence (ms-s) | Item convergence (seconds-minutes) |
+| **Fan-out** | 1 (unicast forwarding) | N (multicast-like, all group members) |
+| **Relay behaviour** | Stateless forwarding | Store-and-forward (relays persist items) |
+
+OSPF's hierarchy (areas, ABRs, backbone) maps loosely to Cordelia's topology:
+orgs are like OSPF areas, edge relays are like ABRs, and backbone nodes are
+like area 0. But Cordelia's "routing" is really group membership replication --
+an item reaches a node if and only if that node is a member of the group (or a
+relay that has learned the group via exchange).
+
+The 4-tier priority in `random_hot_peer_for_group_or_relays()` is not fan-out
+-- it selects ONE peer per group per sync cycle for anti-entropy. The actual
+dissemination fan-out comes from chatty push (epidemic) and is inherently N
+(all active group peers). Moderate's header-only notification added protocol
+complexity without improving either the fan-out or the convergence time.
+
+### 10.5 Simplification Benefits
+
+Reducing to two cultures (chatty, taciturn) provides:
+
+1. **Fewer code paths**: Removed `NotifyAndFetch` strategy, `BroadcastHeader`
+   outbound action, header-specific handler in replication task
+2. **Fewer test combinations**: Culture x topology x scale matrix is 2/3 the
+   previous size
+3. **Clearer deployment guidance**: Chatty for real-time collaboration,
+   taciturn for archival/backup groups. No ambiguous middle ground
+4. **Simpler protocol constants**: Removed `SYNC_INTERVAL_MODERATE_SECS`
+   from protocol; retained in era config for backward compatibility only
+
+### 10.6 Migration
+
+Existing groups with `broadcast_eagerness: "moderate"` require no migration.
+The `GroupCulture::strategy()` method maps "moderate" to `EagerPush` (chatty).
+Groups will immediately benefit from eager push replication on next node
+restart. No data migration, no config changes, no group re-creation needed.
+
+The `sync_interval_moderate_secs` field is retained in `ProtocolEra` and node
+config for backward compatibility but is no longer consulted by the replication
+engine.
 
 ---
 

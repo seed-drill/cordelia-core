@@ -65,7 +65,7 @@ pub struct ProtocolEra {
     // -- Replication --
     /// Eager-push anti-entropy interval in seconds (chatty groups).
     pub eager_push_interval_secs: u64,
-    /// Anti-entropy sync interval for moderate groups (seconds).
+    /// Deprecated: moderate maps to chatty. Retained for config compat.
     pub sync_interval_moderate_secs: u64,
     /// Anti-entropy sync interval for taciturn groups (seconds).
     pub sync_interval_taciturn_secs: u64,

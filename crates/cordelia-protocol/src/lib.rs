@@ -45,9 +45,6 @@ pub const PONG_TIMEOUT_SECS: u64 = ERA_0.pong_timeout_secs;
 /// Eager-push anti-entropy interval in seconds (sourced from current era).
 pub const EAGER_PUSH_INTERVAL_SECS: u64 = ERA_0.eager_push_interval_secs;
 
-/// Anti-entropy sync interval for moderate groups (sourced from current era).
-pub const SYNC_INTERVAL_MODERATE_SECS: u64 = ERA_0.sync_interval_moderate_secs;
-
 /// Anti-entropy sync interval for taciturn groups (sourced from current era).
 pub const SYNC_INTERVAL_TACITURN_SECS: u64 = ERA_0.sync_interval_taciturn_secs;
 

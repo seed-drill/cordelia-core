@@ -363,7 +363,6 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
 
     // Build replication engine
     let repl_config = ReplicationConfig {
-        sync_interval_moderate_secs: cfg.replication.sync_interval_moderate_secs,
         sync_interval_taciturn_secs: cfg.replication.sync_interval_taciturn_secs,
         tombstone_retention_days: cfg.replication.tombstone_retention_days,
         max_batch_size: cfg.replication.max_batch_size,

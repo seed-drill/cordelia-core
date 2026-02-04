@@ -321,7 +321,7 @@ pub struct DeviceRevokeRequest {
 }
 
 fn default_culture() -> String {
-    r#"{"broadcast_eagerness":"moderate"}"#.into()
+    r#"{"broadcast_eagerness":"chatty"}"#.into()
 }
 
 fn default_security_policy() -> String {

@@ -220,15 +220,14 @@ fn verify_descriptor_signature(desc: &GroupDescriptor, pubkey_hex: &str, sig_hex
 }
 
 /// Check if broadcast_eagerness increased (informational only, soft policy).
+/// "moderate" is treated as chatty (deprecated, maps to eager).
 fn eagerness_increased(old_culture: &str, new_culture: &str) -> bool {
     fn parse_eagerness(culture: &str) -> u8 {
-        if culture.contains("\"eager\"") {
+        if culture.contains("\"eager\"") || culture.contains("\"chatty\"") || culture.contains("\"moderate\"") {
             2
-        } else if culture.contains("\"moderate\"") {
-            1
         } else {
             0
-        } // passive or unknown
+        } // passive/taciturn or unknown
     }
     parse_eagerness(new_culture) > parse_eagerness(old_culture)
 }
