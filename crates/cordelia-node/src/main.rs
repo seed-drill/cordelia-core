@@ -242,8 +242,56 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         tracing::info!(%ext_addr, "added external address");
     }
 
-    // Build peer pool
-    let pool = peer_pool::PeerPool::new(shared_groups.clone());
+    // Build relay state (only relevant for relay nodes).
+    // Must be created before PeerPool so relay_learned_groups can be
+    // passed to the pool for group_intersection computation.
+    let relay_posture_val = if our_role == config::NodeRole::Relay {
+        Some(cfg.relay_posture())
+    } else {
+        None
+    };
+    let relay_blocked = Arc::new(cfg.relay_blocked_groups());
+
+    // For dynamic/explicit relays: build the accepted groups set.
+    // For dynamic: starts empty, populated by governor via GroupExchange.
+    // For explicit: pre-populated from config.
+    // For transparent: not used (acceptance is always true).
+    let relay_accepted_groups: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>> =
+        match relay_posture_val {
+            Some(RelayPosture::Dynamic) => Some(Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashSet::new(),
+            ))),
+            Some(RelayPosture::Explicit) => Some(Arc::new(tokio::sync::RwLock::new(
+                cfg.relay_allowed_groups(),
+            ))),
+            _ => None,
+        };
+
+    // For dynamic relays, the governor needs to write to this same set.
+    // We alias it as relay_learned_groups for clarity.
+    let relay_learned_groups: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>> =
+        if relay_posture_val == Some(RelayPosture::Dynamic) {
+            relay_accepted_groups.clone()
+        } else {
+            None
+        };
+
+    if let Some(posture) = relay_posture_val {
+        tracing::info!(
+            posture = %posture,
+            blocked = relay_blocked.len(),
+            "relay posture configured"
+        );
+    }
+
+    // Build peer pool. Relay nodes get relay_learned_groups so that
+    // group_intersection includes dynamically learned groups (enables
+    // anti-entropy sync for groups discovered via group exchange).
+    let pool = if let Some(ref learned) = relay_learned_groups {
+        peer_pool::PeerPool::new_relay(shared_groups.clone(), learned.clone())
+    } else {
+        peer_pool::PeerPool::new(shared_groups.clone())
+    };
 
     // Build API state
     let pool_for_count = pool.clone();
@@ -321,46 +369,6 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
         max_batch_size: cfg.replication.max_batch_size,
     };
     let repl_engine = ReplicationEngine::new(repl_config, cfg.node.entity_id.clone());
-
-    // Build relay state (only relevant for relay nodes)
-    let relay_posture_val = if our_role == config::NodeRole::Relay {
-        Some(cfg.relay_posture())
-    } else {
-        None
-    };
-    let relay_blocked = Arc::new(cfg.relay_blocked_groups());
-
-    // For dynamic/explicit relays: build the accepted groups set.
-    // For dynamic: starts empty, populated by governor via GroupExchange.
-    // For explicit: pre-populated from config.
-    // For transparent: not used (acceptance is always true).
-    let relay_accepted_groups: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>> =
-        match relay_posture_val {
-            Some(RelayPosture::Dynamic) => Some(Arc::new(tokio::sync::RwLock::new(
-                std::collections::HashSet::new(),
-            ))),
-            Some(RelayPosture::Explicit) => Some(Arc::new(tokio::sync::RwLock::new(
-                cfg.relay_allowed_groups(),
-            ))),
-            _ => None,
-        };
-
-    // For dynamic relays, the governor needs to write to this same set.
-    // We alias it as relay_learned_groups for clarity.
-    let relay_learned_groups: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>> =
-        if relay_posture_val == Some(RelayPosture::Dynamic) {
-            relay_accepted_groups.clone()
-        } else {
-            None
-        };
-
-    if let Some(posture) = relay_posture_val {
-        tracing::info!(
-            posture = %posture,
-            blocked = relay_blocked.len(),
-            "relay posture configured"
-        );
-    }
 
     // Create swarm command/event channels
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<swarm_task::SwarmCommand>(256);

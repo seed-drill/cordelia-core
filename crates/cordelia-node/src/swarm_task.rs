@@ -660,7 +660,18 @@ pub async fn run_swarm_loop(
                         }
                     }
                     SwarmEvent::Behaviour(ev) => {
-                        let groups_snap = shared_groups.read().await.clone();
+                        let mut groups_snap = shared_groups.read().await.clone();
+                        // Relay nodes: include learned groups so exchange responses
+                        // advertise all groups the relay handles (not just formal members).
+                        if let Some(ref accepted) = relay_accepted_groups {
+                            if let Ok(set) = accepted.try_read() {
+                                for g in set.iter() {
+                                    if !groups_snap.contains(g) {
+                                        groups_snap.push(g.clone());
+                                    }
+                                }
+                            }
+                        }
                         handle_behaviour_event(
                             ev,
                             &mut swarm,

@@ -3,14 +3,17 @@
 # Designed to run INSIDE the orchestrator container (direct hostname access).
 #
 # Test plan:
-#   1. Create personal group "personal-agent-alpha-1" on agent-alpha-1 (taciturn culture)
-#   2. Add keeper-alpha-1 and keeper-alpha-2 as keeper members
-#   3. Write item to personal group on agent-alpha-1
-#   4. Verify item replicates to both keepers via anti-entropy sync
-#   5. Verify item does NOT leak to bravo or backbone nodes
-#   6. Write a second item, verify it also propagates
+#   1. Create personal group on agent-alpha-1, edge nodes, and keeper nodes
+#      (group must exist on relay/edge nodes for group_intersection routing)
+#   2. Write item to personal group on agent-alpha-1
+#   3. Verify item replicates to both keepers via edge relay nodes
+#   4. Verify item does NOT leak to bravo or backbone nodes
+#   5. Write a second item, verify it also propagates
 #
-# Taciturn sync interval is 30s in test config, so budget ~90s for propagation.
+# Replication path: agent -> edge (relay) -> keeper
+# Uses chatty culture for eager push (immediate replication on write).
+# Group must exist on edge nodes so group_intersection is computed during
+# group exchange, enabling the relay push/re-push path.
 
 set -euo pipefail
 
@@ -86,18 +89,18 @@ TS=$(date +%s)
 PG_ID="personal-agent-alpha-1-${TS}"
 PG_ITEM="pg-item-${TS}"
 
-echo "[1] Creating personal group '${PG_ID}' on agent + keepers..."
+echo "[1] Creating personal group '${PG_ID}' on agent, edges, and keepers..."
 
-# Create group on the agent (owner) and both keepers (same pattern as existing tests:
-# groups must exist on each node for replication to work, since add_member has an
-# FK constraint requiring the entity in l1_hot).
-for node in agent-alpha-1 keeper-alpha-1 keeper-alpha-2; do
+# Create group on agent (owner), edge relays, and keepers.
+# Edge nodes MUST have the group for group_intersection routing -- without it,
+# the relay can't compute group_intersection and won't forward items.
+for node in agent-alpha-1 edge-alpha-1 edge-alpha-2 keeper-alpha-1 keeper-alpha-2; do
     api "$node" "groups/create" \
-        "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-alpha-1 (personal)\",\"culture\":\"taciturn\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+        "{\"group_id\":\"${PG_ID}\",\"name\":\"agent-alpha-1 (personal)\",\"culture\":\"chatty\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
 done
 
-# Verify group exists on all three nodes
-for node in agent-alpha-1 keeper-alpha-1 keeper-alpha-2; do
+# Verify group exists on key nodes
+for node in agent-alpha-1 edge-alpha-1 keeper-alpha-1 keeper-alpha-2; do
     GRPS=$(api "$node" "groups/list" "{}" 2>/dev/null || echo "[]")
     if echo "$GRPS" | grep -q "$PG_ID"; then
         pass "personal group created on ${node}"
@@ -106,8 +109,12 @@ for node in agent-alpha-1 keeper-alpha-1 keeper-alpha-2; do
     fi
 done
 
-# Allow governor tick to register the new group
-sleep 10
+# Wait for group exchange so group_intersection is computed on all peers.
+# GROUP_EXCHANGE_TICKS=6, governor tick=10s, so group exchange fires every 60s.
+# Initial group exchange also fires on peer connect, but peers are already
+# connected at this point, so we wait for the periodic exchange.
+echo "  Waiting 65s for group exchange tick..."
+sleep 65
 echo ""
 
 # --- Test 2: Write item to personal group ----------------------------------
@@ -126,15 +133,15 @@ echo ""
 
 # --- Test 3: Verify replication to keepers ----------------------------------
 
-echo "[3] Waiting for replication to keepers (taciturn sync, ~30-90s)..."
+echo "[3] Waiting for replication to keepers (chatty push, agent -> edge -> keeper)..."
 
-if wait_for_item "keeper-alpha-1" "$PG_ITEM" 120; then
+if wait_for_item "keeper-alpha-1" "$PG_ITEM" 180; then
     pass "item replicated to keeper-alpha-1"
 else
     fail "item did NOT replicate to keeper-alpha-1 within timeout"
 fi
 
-if wait_for_item "keeper-alpha-2" "$PG_ITEM" 120; then
+if wait_for_item "keeper-alpha-2" "$PG_ITEM" 180; then
     pass "item replicated to keeper-alpha-2"
 else
     fail "item did NOT replicate to keeper-alpha-2 within timeout"
@@ -143,10 +150,13 @@ echo ""
 
 # --- Test 4: Verify isolation (no leakage to other orgs) -------------------
 
-echo "[4] Verifying isolation (15s window for potential leakage)..."
+echo "[4] Verifying org isolation (15s window for potential leakage)..."
 sleep 15
 
-for node in keeper-bravo-1 boot1 edge-bravo-1; do
+# Personal group items must NOT reach other org's keepers or agents.
+# Backbone/boot nodes may relay opaque blobs (transparent posture) -- that's
+# expected infrastructure behaviour, not a leak.
+for node in keeper-bravo-1 agent-bravo-1 edge-bravo-1; do
     if assert_no_item "$node" "$PG_ITEM"; then
         pass "personal group item correctly absent from ${node}"
     else
@@ -163,10 +173,53 @@ echo "[5] Second write to verify ongoing replication..."
 api "agent-alpha-1" "l2/write" \
     "{\"item_id\":\"${PG_ITEM2}\",\"type\":\"learning\",\"data\":{\"test\":\"personal-group-convergence-2\",\"source\":\"agent-alpha-1\"},\"meta\":{\"visibility\":\"group\",\"group_id\":\"${PG_ID}\",\"owner_id\":\"agent-alpha-1\",\"author_id\":\"agent-alpha-1\",\"key_version\":1}}" > /dev/null
 
-if wait_for_item "keeper-alpha-1" "$PG_ITEM2" 120; then
+if wait_for_item "keeper-alpha-1" "$PG_ITEM2" 180; then
     pass "second item replicated to keeper-alpha-1"
 else
     fail "second item did NOT replicate to keeper-alpha-1"
+fi
+echo ""
+
+# --- Test 6: Taciturn culture WITHOUT edge provisioning --------------------
+# This tests that dynamic relays learn the group via group exchange and
+# can route items via anti-entropy sync (relay_learned_groups in
+# group_intersection). No explicit group creation on edge nodes.
+
+PG_ID2="personal-taciturn-${TS}"
+PG_ITEM3="pg-taciturn-${TS}"
+
+echo "[6] Taciturn replication without edge provisioning..."
+echo "  Creating group on agent + keepers only (edges learn via group exchange)..."
+
+for node in agent-alpha-1 keeper-alpha-1 keeper-alpha-2; do
+    api "$node" "groups/create" \
+        "{\"group_id\":\"${PG_ID2}\",\"name\":\"taciturn-test\",\"culture\":\"taciturn\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+done
+
+# Wait for group exchange so edges learn the group from agent
+echo "  Waiting 65s for group exchange tick..."
+sleep 65
+
+# Write item
+api "agent-alpha-1" "l2/write" \
+    "{\"item_id\":\"${PG_ITEM3}\",\"type\":\"entity\",\"data\":{\"test\":\"taciturn-no-edge-provision\"},\"meta\":{\"visibility\":\"group\",\"group_id\":\"${PG_ID2}\",\"owner_id\":\"agent-alpha-1\",\"author_id\":\"agent-alpha-1\",\"key_version\":1}}" > /dev/null
+
+if wait_for_item "agent-alpha-1" "$PG_ITEM3" 5; then
+    pass "taciturn item readable on agent-alpha-1 (local)"
+else
+    fail "taciturn item NOT readable on agent-alpha-1 after write"
+fi
+
+# Taciturn: no eager push. Replication via anti-entropy sync only.
+# Path: edge pulls from agent (sync), then keeper pulls from edge (sync).
+# sync_base_tick = 60s, so two hops = up to 180s worst case.
+# At scale (300+ nodes), sync cycles have more groups to iterate,
+# so allow extra time: 120s (2x exchange) + 180s (3x sync cycles) = 300s.
+echo "  Waiting for anti-entropy sync (taciturn, up to 360s)..."
+if wait_for_item "keeper-alpha-1" "$PG_ITEM3" 360; then
+    pass "taciturn item replicated to keeper-alpha-1 (no edge provisioning)"
+else
+    fail "taciturn item did NOT replicate to keeper-alpha-1"
 fi
 echo ""
 

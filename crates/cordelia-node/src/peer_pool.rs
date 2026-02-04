@@ -6,11 +6,12 @@
 use cordelia_governor::{GovernorActions, PeerState};
 use cordelia_protocol::{GroupId, NodeId};
 use libp2p::Multiaddr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 type SharedGroups = Arc<RwLock<Vec<GroupId>>>;
+type SharedRelayGroups = Arc<RwLock<HashSet<String>>>;
 
 /// Handle to a connected peer (metadata only).
 #[derive(Debug, Clone)]
@@ -29,10 +30,16 @@ pub struct PeerHandle {
 }
 
 /// Thread-safe pool of active peer connections.
+///
+/// For relay nodes, `relay_learned_groups` extends the effective group set
+/// used when computing `group_intersection`. This allows dynamic relays to
+/// find anti-entropy sync targets for groups they've learned from peers,
+/// not just groups they're formally members of.
 #[derive(Clone)]
 pub struct PeerPool {
     inner: Arc<RwLock<HashMap<NodeId, PeerHandle>>>,
     our_groups: SharedGroups,
+    relay_learned_groups: Option<SharedRelayGroups>,
 }
 
 impl PeerPool {
@@ -40,7 +47,39 @@ impl PeerPool {
         Self {
             inner: Arc::new(RwLock::new(HashMap::new())),
             our_groups,
+            relay_learned_groups: None,
         }
+    }
+
+    /// Create a pool for a relay node. Learned groups are included when
+    /// computing `group_intersection`, enabling anti-entropy sync for
+    /// groups discovered via group exchange.
+    pub fn new_relay(our_groups: SharedGroups, learned: SharedRelayGroups) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+            our_groups,
+            relay_learned_groups: Some(learned),
+        }
+    }
+
+    /// Compute group intersection: peer's groups that overlap with our effective
+    /// group set (shared_groups + relay_learned_groups for relay nodes).
+    async fn compute_intersection(&self, peer_groups: &[GroupId]) -> Vec<GroupId> {
+        let our_groups = self.our_groups.read().await;
+        let learned = if let Some(ref relay) = self.relay_learned_groups {
+            Some(relay.read().await)
+        } else {
+            None
+        };
+
+        peer_groups
+            .iter()
+            .filter(|g| {
+                our_groups.contains(g)
+                    || learned.as_ref().is_some_and(|set| set.contains(g.as_str()))
+            })
+            .cloned()
+            .collect()
     }
 
     /// Insert a new peer after successful identify exchange.
@@ -53,12 +92,7 @@ impl PeerPool {
         protocol_version: u16,
         is_relay: bool,
     ) {
-        let our_groups = self.our_groups.read().await;
-        let group_intersection: Vec<GroupId> = peer_groups
-            .iter()
-            .filter(|g| our_groups.contains(g))
-            .cloned()
-            .collect();
+        let group_intersection = self.compute_intersection(&peer_groups).await;
 
         let state_name = state.name();
         let handle = PeerHandle {
@@ -158,25 +192,42 @@ impl PeerPool {
 
     /// Get a random hot peer for a group, including relays.
     /// Used by anti-entropy sync on relays where group membership is irrelevant.
-    /// Falls back to warm peers if no hot peers available.
+    /// Prefers peers with group_intersection match over relay-only matches.
+    /// Falls back to warm peers, then to relay-only matches.
     pub async fn random_hot_peer_for_group_or_relays(&self, group_id: &str) -> Option<PeerHandle> {
         let pool = self.inner.read().await;
+        let gid = group_id.to_string();
+
+        // Priority 1: Hot peers with group_intersection match (most likely to have items)
         let mut peers: Vec<&PeerHandle> = pool
             .values()
-            .filter(|h| {
-                h.state == PeerState::Hot
-                    && (h.is_relay || h.group_intersection.contains(&group_id.to_string()))
-            })
+            .filter(|h| h.state == PeerState::Hot && h.group_intersection.contains(&gid))
             .collect();
+
+        // Priority 2: Active (warm) peers with group_intersection match
         if peers.is_empty() {
             peers = pool
                 .values()
-                .filter(|h| {
-                    h.state.is_active()
-                        && (h.is_relay || h.group_intersection.contains(&group_id.to_string()))
-                })
+                .filter(|h| h.state.is_active() && h.group_intersection.contains(&gid))
                 .collect();
         }
+
+        // Priority 3: Any hot relay peer (may have relayed items without group membership)
+        if peers.is_empty() {
+            peers = pool
+                .values()
+                .filter(|h| h.state == PeerState::Hot && h.is_relay)
+                .collect();
+        }
+
+        // Priority 4: Any active relay peer
+        if peers.is_empty() {
+            peers = pool
+                .values()
+                .filter(|h| h.state.is_active() && h.is_relay)
+                .collect();
+        }
+
         if peers.is_empty() {
             return None;
         }
@@ -218,13 +269,9 @@ impl PeerPool {
 
     /// Update a peer's groups and recompute group_intersection.
     pub async fn update_peer_groups(&self, node_id: &NodeId, groups: Vec<GroupId>) {
-        let our_groups = self.our_groups.read().await;
+        let intersection = self.compute_intersection(&groups).await;
         if let Some(handle) = self.inner.write().await.get_mut(node_id) {
-            handle.group_intersection = groups
-                .iter()
-                .filter(|g| our_groups.contains(g))
-                .cloned()
-                .collect();
+            handle.group_intersection = intersection;
             handle.groups = groups;
         }
     }
@@ -329,6 +376,8 @@ impl PeerPool {
                     rtt_ms: h.rtt_ms,
                     items_delivered: 0, // TODO: track this per-connection
                     groups: h.groups.clone(),
+                    group_intersection: h.group_intersection.clone(),
+                    is_relay: h.is_relay,
                     protocol_version: h.protocol_version,
                 }
             })
@@ -339,11 +388,70 @@ impl PeerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libp2p::PeerId;
+
+    fn test_peer_id() -> PeerId {
+        PeerId::random()
+    }
 
     #[tokio::test]
     async fn test_peer_pool_new() {
         let groups = Arc::new(RwLock::new(vec!["g1".into()]));
         let pool = PeerPool::new(groups);
         assert_eq!(pool.len().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_intersection_without_relay() {
+        let our_groups = Arc::new(RwLock::new(vec!["g1".into(), "g2".into()]));
+        let pool = PeerPool::new(our_groups);
+
+        let peer = test_peer_id();
+        pool.insert(peer, vec![], vec!["g2".into(), "g3".into()], PeerState::Hot, 1, false).await;
+
+        let handle = pool.get(&peer).await.unwrap();
+        assert_eq!(handle.group_intersection, vec!["g2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_intersection_includes_relay_learned_groups() {
+        let our_groups = Arc::new(RwLock::new(vec!["g1".into()]));
+        let learned = Arc::new(RwLock::new(HashSet::from(["g-learned".to_string()])));
+        let pool = PeerPool::new_relay(our_groups, learned);
+
+        let peer = test_peer_id();
+        pool.insert(
+            peer, vec![],
+            vec!["g1".into(), "g-learned".into(), "g-unknown".into()],
+            PeerState::Hot, 1, false,
+        ).await;
+
+        let handle = pool.get(&peer).await.unwrap();
+        // g1 matches shared_groups, g-learned matches relay_learned_groups
+        assert!(handle.group_intersection.contains(&"g1".to_string()));
+        assert!(handle.group_intersection.contains(&"g-learned".to_string()));
+        assert!(!handle.group_intersection.contains(&"g-unknown".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_update_peer_groups_uses_relay_learned() {
+        let our_groups = Arc::new(RwLock::new(vec!["g1".into()]));
+        let learned = Arc::new(RwLock::new(HashSet::new()));
+        let pool = PeerPool::new_relay(our_groups, learned.clone());
+
+        let peer = test_peer_id();
+        pool.insert(peer, vec![], vec!["g-new".into()], PeerState::Hot, 1, false).await;
+
+        // Initially no intersection (g-new not in our_groups or learned)
+        let handle = pool.get(&peer).await.unwrap();
+        assert!(handle.group_intersection.is_empty());
+
+        // Simulate group exchange: relay learns g-new
+        learned.write().await.insert("g-new".to_string());
+
+        // Recompute intersection (as group exchange does)
+        pool.update_peer_groups(&peer, vec!["g-new".into()]).await;
+        let handle = pool.get(&peer).await.unwrap();
+        assert_eq!(handle.group_intersection, vec!["g-new".to_string()]);
     }
 }
