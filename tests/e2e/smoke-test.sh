@@ -19,7 +19,8 @@ SKIPPED=0
 # --- Helpers ----------------------------------------------------------------
 
 api() {
-    local host="$1" endpoint="$2" data="${3:-{}}"
+    local host="$1" endpoint="$2"
+    local data; if [ $# -ge 3 ]; then data="$3"; else data='{}'; fi
     curl -sf --max-time 5 \
         -X POST \
         -H "Authorization: Bearer ${BEARER}" \
