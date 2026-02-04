@@ -20,13 +20,6 @@ primary_region = "ams"
   [[services.ports]]
     port = 9474
 
-[[services]]
-  internal_port = 9473
-  protocol = "tcp"
-
-  [[services.ports]]
-    port = 9473
-
 [mounts]
   source = "cordelia_data"
   destination = "/home/cordelia/.cordelia"
