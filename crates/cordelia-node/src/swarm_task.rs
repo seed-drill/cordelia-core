@@ -223,7 +223,10 @@ fn verify_descriptor_signature(desc: &GroupDescriptor, pubkey_hex: &str, sig_hex
 /// "moderate" is treated as chatty (deprecated, maps to eager).
 fn eagerness_increased(old_culture: &str, new_culture: &str) -> bool {
     fn parse_eagerness(culture: &str) -> u8 {
-        if culture.contains("\"eager\"") || culture.contains("\"chatty\"") || culture.contains("\"moderate\"") {
+        if culture.contains("\"eager\"")
+            || culture.contains("\"chatty\"")
+            || culture.contains("\"moderate\"")
+        {
             2
         } else {
             0

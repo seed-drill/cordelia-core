@@ -407,7 +407,15 @@ mod tests {
         let pool = PeerPool::new(our_groups);
 
         let peer = test_peer_id();
-        pool.insert(peer, vec![], vec!["g2".into(), "g3".into()], PeerState::Hot, 1, false).await;
+        pool.insert(
+            peer,
+            vec![],
+            vec!["g2".into(), "g3".into()],
+            PeerState::Hot,
+            1,
+            false,
+        )
+        .await;
 
         let handle = pool.get(&peer).await.unwrap();
         assert_eq!(handle.group_intersection, vec!["g2".to_string()]);
@@ -421,10 +429,14 @@ mod tests {
 
         let peer = test_peer_id();
         pool.insert(
-            peer, vec![],
+            peer,
+            vec![],
             vec!["g1".into(), "g-learned".into(), "g-unknown".into()],
-            PeerState::Hot, 1, false,
-        ).await;
+            PeerState::Hot,
+            1,
+            false,
+        )
+        .await;
 
         let handle = pool.get(&peer).await.unwrap();
         // g1 matches shared_groups, g-learned matches relay_learned_groups
@@ -440,7 +452,8 @@ mod tests {
         let pool = PeerPool::new_relay(our_groups, learned.clone());
 
         let peer = test_peer_id();
-        pool.insert(peer, vec![], vec!["g-new".into()], PeerState::Hot, 1, false).await;
+        pool.insert(peer, vec![], vec!["g-new".into()], PeerState::Hot, 1, false)
+            .await;
 
         // Initially no intersection (g-new not in our_groups or learned)
         let handle = pool.get(&peer).await.unwrap();
