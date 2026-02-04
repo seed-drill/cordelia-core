@@ -89,7 +89,10 @@ _report_collect_diag() {
     for node in $nodes; do
         (
             local result
-            result=$(api_diag "$node" 2>/dev/null || echo '{}')
+            result=$(curl -sf --max-time 5 -X POST \
+                -H "Authorization: Bearer ${BEARER_TOKEN:-test-token-fixed}" \
+                -H "Content-Type: application/json" \
+                -d '{}' "http://${node}:9473/api/v1/diagnostics" 2>/dev/null || echo '{}')
             # Inject node hostname
             echo "$result" | jq --arg n "$node" '. + {node: $n}' > "$tmp_dir/${node}.json" 2>/dev/null || \
                 echo "{\"node\":\"$node\",\"error\":\"unreachable\"}" > "$tmp_dir/${node}.json"
@@ -203,7 +206,11 @@ report_start_sampler() {
             for node in $nodes; do
                 (
                     local hot
-                    hot=$(api_peers "$node" 2>/dev/null | jq '[.peers[] | select(.state == "hot")] | length' 2>/dev/null || echo "0")
+                    hot=$(curl -sf --max-time 5 -X POST \
+                        -H "Authorization: Bearer ${BEARER_TOKEN:-test-token-fixed}" \
+                        -H "Content-Type: application/json" \
+                        -d '{}' "http://${node}:9473/api/v1/peers" 2>/dev/null \
+                        | jq '.hot // 0' 2>/dev/null || echo "0")
                     echo "$hot" > "$tmp_dir/${node}"
                 ) &
                 pids="$pids $!"
@@ -341,17 +348,17 @@ report_finalize() {
         final_state=$(jq '{
             healthy_nodes: [.[] | select(.error == null)] | length,
             total_nodes: length,
-            total_hot: [.[] | (.hot_peers // 0)] | add,
-            avg_hot: (([.[] | (.hot_peers // 0)] | add) / ([.[] | (.hot_peers // 0)] | length) * 100 | round / 100),
-            total_items_synced: [.[] | (.items_synced // .total_synced // 0)] | add,
-            total_sync_errors: [.[] | (.sync_errors // 0)] | add,
+            total_hot: [.[] | (.peers.hot // 0)] | add,
+            avg_hot: (([.[] | (.peers.hot // 0)] | add) / ([.[] | select(.error == null)] | length) * 100 | round / 100),
+            total_items_synced: [.[] | (.replication.items_synced // 0)] | add,
+            total_sync_errors: [.[] | (.replication.sync_errors // 0)] | add,
             nodes: [.[] | select(.error == null) | {
                 entity_id: (.entity_id // .node),
-                hot: (.hot_peers // 0),
-                warm: (.warm_peers // 0),
-                pushed: (.items_pushed // 0),
-                synced: (.items_synced // .total_synced // 0),
-                errors: (.sync_errors // 0)
+                hot: (.peers.hot // 0),
+                warm: (.peers.warm // 0),
+                pushed: (.replication.items_pushed // 0),
+                synced: (.replication.items_synced // 0),
+                errors: (.replication.sync_errors // 0)
             }] | sort_by(-.synced)
         }' "$post_snapshot" 2>/dev/null || echo '{}')
     fi
@@ -371,14 +378,17 @@ report_finalize() {
     # --- Build replication items ---
     local replication='{"items":[]}'
     if [ -s "$_REPORT_ITEMS_FILE" ] && [ -s "$_REPORT_LATENCY_FILE" ]; then
+        local items_json latency_json
+        items_json=$(jq -s '.' "$_REPORT_ITEMS_FILE" 2>/dev/null || echo '[]')
+        latency_json=$(jq -s '.' "$_REPORT_LATENCY_FILE" 2>/dev/null || echo '[]')
         replication=$(jq -n \
-            --slurpfile items "$_REPORT_ITEMS_FILE" \
-            --slurpfile latency "$_REPORT_LATENCY_FILE" \
-            '{items: [($items | group_by(.item_id))[] | {
-                item_id: .[0].item_id,
-                written_on: .[0].written_on,
-                written_at: .[0].written_at,
-                replicas: [($latency[] | select(.item_id == .[0].item_id)) | {
+            --argjson w "$items_json" \
+            --argjson d "$latency_json" \
+            '{items: [$w[] | . as $item | {
+                item_id: $item.item_id,
+                written_on: $item.written_on,
+                written_at: $item.written_at,
+                replicas: [$d[] | select(.item_id == $item.item_id) | {
                     node: .node,
                     detected_at: .detected_at,
                     latency_secs: .latency_secs
@@ -432,6 +442,9 @@ report_finalize() {
     echo "  [report]   report.md, metrics.json, convergence.csv"
     [ -f "$REPORT_DIR/convergence.png" ] && echo "  [report]   convergence.png"
     [ -f "$REPORT_DIR/latency.png" ] && echo "  [report]   latency.png"
+
+    # Preserve original exit code through the trap
+    return "$exit_code"
 }
 
 # --- Markdown report generation ---------------------------------------------
