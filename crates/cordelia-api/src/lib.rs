@@ -122,6 +122,8 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/v1/l1/read", post(l1_read))
         .route("/api/v1/l1/write", post(l1_write))
+        .route("/api/v1/l1/delete", post(l1_delete))
+        .route("/api/v1/l1/list", post(l1_list))
         .route("/api/v1/l2/read", post(l2_read))
         .route("/api/v1/l2/write", post(l2_write))
         .route("/api/v1/l2/delete", post(l2_delete))
@@ -176,6 +178,14 @@ pub struct L1WriteRequest {
 }
 
 #[derive(Deserialize)]
+pub struct L1DeleteRequest {
+    pub user_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct L1ListRequest {}
+
+#[derive(Deserialize)]
 pub struct L2ReadRequest {
     pub item_id: String,
 }
@@ -196,6 +206,8 @@ pub struct L2MetaResponse {
     pub author_id: Option<String>,
     pub key_version: i32,
     pub checksum: Option<String>,
+    pub parent_id: Option<String>,
+    pub is_copy: bool,
 }
 
 #[derive(Deserialize)]
@@ -392,6 +404,37 @@ async fn l1_write(
     }
 }
 
+async fn l1_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<L1DeleteRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    match state.storage.delete_l1(&req.user_id) {
+        Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn l1_list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(_req): Json<L1ListRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    match state.storage.list_l1_users() {
+        Ok(users) => Json(serde_json::json!({ "users": users })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 async fn l2_read(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -416,6 +459,8 @@ async fn l2_read(
                     author_id: row.author_id,
                     key_version: row.key_version,
                     checksum: row.checksum,
+                    parent_id: row.parent_id,
+                    is_copy: row.is_copy,
                 },
             })
             .into_response()

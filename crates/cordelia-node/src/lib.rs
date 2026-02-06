@@ -23,6 +23,12 @@ impl cordelia_storage::Storage for StorageClone {
     fn write_l1(&self, user_id: &str, data: &[u8]) -> cordelia_storage::Result<()> {
         self.0.write_l1(user_id, data)
     }
+    fn delete_l1(&self, user_id: &str) -> cordelia_storage::Result<bool> {
+        self.0.delete_l1(user_id)
+    }
+    fn list_l1_users(&self) -> cordelia_storage::Result<Vec<String>> {
+        self.0.list_l1_users()
+    }
     fn read_l2_item(
         &self,
         id: &str,

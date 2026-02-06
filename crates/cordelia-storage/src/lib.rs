@@ -135,6 +135,8 @@ pub struct DeviceRow {
 pub trait Storage: Send + Sync {
     fn read_l1(&self, user_id: &str) -> Result<Option<Vec<u8>>>;
     fn write_l1(&self, user_id: &str, data: &[u8]) -> Result<()>;
+    fn delete_l1(&self, user_id: &str) -> Result<bool>;
+    fn list_l1_users(&self) -> Result<Vec<String>>;
 
     fn read_l2_item(&self, id: &str) -> Result<Option<L2ItemRow>>;
     fn write_l2_item(&self, item: &L2ItemWrite) -> Result<()>;
@@ -376,6 +378,21 @@ impl Storage for SqliteStorage {
             params![user_id, data],
         )?;
         Ok(())
+    }
+
+    fn delete_l1(&self, user_id: &str) -> Result<bool> {
+        let conn = self.db()?;
+        let changes = conn.execute("DELETE FROM l1_hot WHERE user_id = ?1", params![user_id])?;
+        Ok(changes > 0)
+    }
+
+    fn list_l1_users(&self) -> Result<Vec<String>> {
+        let conn = self.db()?;
+        let mut stmt = conn.prepare("SELECT user_id FROM l1_hot ORDER BY user_id")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn read_l2_item(&self, id: &str) -> Result<Option<L2ItemRow>> {
