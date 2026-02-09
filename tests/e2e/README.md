@@ -207,6 +207,30 @@ Compose merges the files. Your services persist across topology regeneration.
 4. **Reverse replication** -- items flow in both directions through the backbone
 5. **Cluster health** -- >=80% of key nodes have active hot peers
 
+## VM Requirements
+
+The default 219-node topology (expanded to 347 containers with the full 16-org
+`topology.env`) runs on the `cordelia-test` VM (192.168.3.206):
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| CPUs | 4 | 8 |
+| RAM | 16 GB | 32 GB |
+| Disk | 100 GB | 150 GB |
+
+**Disk budget breakdown** (347-container topology):
+
+| Component | Size |
+|-----------|------|
+| OS + tooling | ~22 GB |
+| Docker images (node, proxy, orchestrator) | ~3-5 GB (active) |
+| Docker build cache | ~6-42 GB (grows over rebuilds) |
+| Container overlay storage | ~1.5 GB |
+| Headroom for logs, SQLite WAL, temp files | 20+ GB |
+
+**Important:** Docker build cache accumulates across rebuilds. Run
+`docker system prune` periodically (see Operations section below).
+
 ## Resource Expectations (219-node topology)
 
 | Metric | Value |
@@ -216,3 +240,121 @@ Compose merges the files. Your services persist across topology regeneration.
 | Memory | ~9 GB |
 | ARP entries | ~164 (with sysctl fix) |
 | Startup peak load | ~3.5-4.5 |
+
+## Operations
+
+### Health Verification
+
+Docker health checks use `curl` inside the container via OCI exec. If the
+host disk is full, OCI exec fails with `no space left on device`, causing
+**all** containers to report `(unhealthy)` even when nodes are actually
+functioning correctly. Always verify with direct API calls before assuming
+the network is down.
+
+**Quick health check** (from the VM host, not the orchestrator):
+
+```bash
+# Check a boot node (port 9473 = boot1)
+curl -sf -X POST \
+  -H "Authorization: Bearer test-token-fixed" \
+  -H "Content-Type: application/json" \
+  -d '{}' http://127.0.0.1:9473/api/v1/status
+
+# Check peers
+curl -sf -X POST \
+  -H "Authorization: Bearer test-token-fixed" \
+  -H "Content-Type: application/json" \
+  -d '{}' http://127.0.0.1:9473/api/v1/peers | python3 -m json.tool
+
+# Check diagnostics
+curl -sf -X POST \
+  -H "Authorization: Bearer test-token-fixed" \
+  -H "Content-Type: application/json" \
+  -d '{}' http://127.0.0.1:9473/api/v1/diagnostics | python3 -m json.tool
+```
+
+**What healthy looks like:**
+
+| Node type | Expected warm peers | Expected hot peers | Groups |
+|-----------|--------------------|--------------------|--------|
+| Boot relay | ~51 | 3 | 0-1 |
+| Edge relay | 15-40 (varies by org size) | 3 | 0-3 |
+| Keeper | 2-3 | 1 | 2 (org-internal + shared-xorg) |
+| Agent/personal | 0-2 | 2 | 2 (personal + org-internal) |
+
+**Replication test** (write to one org, read from another):
+
+```bash
+# Write to keeper-alpha-1
+curl -sf -X POST \
+  -H "Authorization: Bearer test-token-fixed" \
+  -H "Content-Type: application/json" \
+  -d '{"item_id": "test-123", "type": "learning",
+       "data": {"name": "test", "content": "hello"},
+       "meta": {"visibility": "group", "group_id": "shared-xorg",
+                "owner_id": "e2e-test", "author_id": "e2e-test",
+                "key_version": 1}}' \
+  http://127.0.0.1:10043/api/v1/l2/write
+
+# Wait a few seconds, then read from keeper-bravo-1
+sleep 5
+curl -sf -X POST \
+  -H "Authorization: Bearer test-token-fixed" \
+  -H "Content-Type: application/json" \
+  -d '{"item_id": "test-123"}' \
+  http://127.0.0.1:10063/api/v1/l2/read
+```
+
+Cross-org replication via `shared-xorg` should complete within 5 seconds.
+Verify matching checksums across replicas.
+
+### Shutdown and Cleanup
+
+```bash
+# Graceful shutdown
+cd /home/rezi/cordelia-core/tests/e2e
+docker compose -f docker-compose.generated.yml down
+
+# Prune unused images and build cache
+docker system prune -a --volumes -f
+
+# Check reclaimed space
+df -h /
+docker system df
+```
+
+### Disk Expansion (via hypervisor)
+
+The VM runs on KVM hypervisor `rezi@pdukvm20`. The disk is a qcow2 image
+at `/var/lib/libvirt/images/cordelia-test.qcow2`.
+
+```bash
+# On the hypervisor (rezi@pdukvm20):
+
+# 1. Shut down the VM
+sudo virsh shutdown cordelia-test
+# Wait for: sudo virsh domstate cordelia-test -> "shut off"
+
+# 2. Resize the qcow2 image
+sudo qemu-img resize /var/lib/libvirt/images/cordelia-test.qcow2 150G
+
+# 3. Start the VM
+sudo virsh start cordelia-test
+
+# 4. Verify inside the VM (cloud-init auto-grows the partition)
+ssh rezi@cordelia-test "df -h /"
+```
+
+The VM uses cloud-init, so `growpart` runs automatically on boot -- no
+manual partition resize needed.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| All containers show `(unhealthy)` | Host disk full; OCI exec can't write to `/tmp` | Check `df -h /`. Prune Docker or expand disk. Nodes may still be functional -- verify with direct API calls. |
+| Nodes lose connectivity after startup | ARP table exhausted | Apply sysctl settings from the warning at the top of this doc |
+| Logs stop appearing in `docker logs` | Disk full; logging daemon can't write | Free disk space. Node process is likely still running. |
+| Write API returns 500 | SQLite can't write (disk full or WAL issue) | Free disk space and restart the affected container |
+| Proxy `/health` returns 404 | Expected on some proxy versions | Use `/api/status` instead |
+| Container won't start | Port conflict or image missing | `docker compose down` fully, rebuild images, then `up -d` |
