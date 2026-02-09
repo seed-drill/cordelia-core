@@ -27,6 +27,8 @@ pub struct PeerHandle {
     pub protocol_version: u16,
     /// Whether this peer advertises itself as a relay.
     pub is_relay: bool,
+    /// Cumulative items delivered to this peer via push/retry.
+    pub items_delivered: u64,
 }
 
 /// Thread-safe pool of active peer connections.
@@ -104,6 +106,7 @@ impl PeerPool {
             rtt_ms: None,
             protocol_version,
             is_relay,
+            items_delivered: 0,
         };
 
         let pool_size = {
@@ -283,6 +286,13 @@ impl PeerPool {
         }
     }
 
+    /// Record items delivered to a peer (push or retry).
+    pub async fn record_items_delivered(&self, node_id: &NodeId, count: u64) {
+        if let Some(handle) = self.inner.write().await.get_mut(node_id) {
+            handle.items_delivered += count;
+        }
+    }
+
     /// Update a peer's RTT (from ping events).
     pub async fn update_rtt(&self, node_id: &NodeId, rtt_ms: f64) {
         if let Some(handle) = self.inner.write().await.get_mut(node_id) {
@@ -374,7 +384,7 @@ impl PeerPool {
                     addrs: h.addrs.iter().map(|a| a.to_string()).collect(),
                     state: h.state.name().to_string(),
                     rtt_ms: h.rtt_ms,
-                    items_delivered: 0, // TODO: track this per-connection
+                    items_delivered: h.items_delivered,
                     groups: h.groups.clone(),
                     group_intersection: h.group_intersection.clone(),
                     is_relay: h.is_relay,

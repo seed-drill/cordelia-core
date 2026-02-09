@@ -186,6 +186,7 @@ pub async fn run_replication_loop(
                     );
 
                     for batch in &batches {
+                        let batch_len = batch.len() as u64;
                         for peer in &peers {
                             if let Err(e) = cmd_tx
                                 .send(SwarmCommand::SendMemoryPush {
@@ -201,6 +202,8 @@ pub async fn run_replication_loop(
                                     group = group_id.as_str(),
                                     "repl: failed to send push command: {e}"
                                 );
+                            } else {
+                                pool.record_items_delivered(&peer.node_id, batch_len).await;
                             }
                         }
                     }
@@ -243,6 +246,7 @@ pub async fn run_replication_loop(
                         );
                         let batches = split_into_batches(&pending.items);
                         for batch in &batches {
+                            let batch_len = batch.len() as u64;
                             for peer in &peers {
                                 if let Err(e) = cmd_tx.send(SwarmCommand::SendMemoryPush {
                                     peer: peer.node_id,
@@ -254,6 +258,8 @@ pub async fn run_replication_loop(
                                         peer = %peer.node_id,
                                         "repl: retry push send failed: {e}"
                                     );
+                                } else {
+                                    pool.record_items_delivered(&peer.node_id, batch_len).await;
                                 }
                             }
                         }

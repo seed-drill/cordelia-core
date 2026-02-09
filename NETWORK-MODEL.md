@@ -917,9 +917,9 @@ This prevents emotionally-generated or uncertain memories from propagating. The 
 | Sync response | Include `since` timestamp in request; verify response covers requested range | PARTIAL (implemented in anti-entropy) |
 | Push | Idempotent write (upsert by item ID). Duplicate push = no-op. | IMPLEMENTED |
 | Handshake | TLS 1.3 session tickets + nonce. Replay detected by QUIC layer. | IMPLEMENTED (quinn handles this) |
-| Keepalive | Include monotonic sequence number. Reject out-of-order. | TODO |
+| Keepalive | Include monotonic sequence number. Reject out-of-order. | DEFERRED (low impact -- replay can only extend perceived liveness of a dead peer, no data integrity risk) |
 
-**Result: Replay is largely mitigated by existing mechanisms.** The remaining gap is keepalive sequence numbers -- low priority since keepalive replay can only cause false activity (keeping a dead peer alive longer), which is minor.
+**Result: Replay is mitigated by existing mechanisms.** Keepalive sequence numbers are deferred: the worst case for keepalive replay is a dead peer appearing alive slightly longer, which the governor's RTT-based demotion handles within 3 missed intervals (45s). No data integrity or confidentiality impact.
 
 ### 4.11 Attack Surface Summary
 
