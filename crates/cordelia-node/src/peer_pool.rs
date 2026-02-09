@@ -378,18 +378,16 @@ impl PeerPool {
             .read()
             .await
             .values()
-            .map(|h| {
-                cordelia_api::PeerDetail {
-                    node_id: h.node_id.to_base58(),
-                    addrs: h.addrs.iter().map(|a| a.to_string()).collect(),
-                    state: h.state.name().to_string(),
-                    rtt_ms: h.rtt_ms,
-                    items_delivered: h.items_delivered,
-                    groups: h.groups.clone(),
-                    group_intersection: h.group_intersection.clone(),
-                    is_relay: h.is_relay,
-                    protocol_version: h.protocol_version,
-                }
+            .map(|h| cordelia_api::PeerDetail {
+                node_id: h.node_id.to_base58(),
+                addrs: h.addrs.iter().map(|a| a.to_string()).collect(),
+                state: h.state.name().to_string(),
+                rtt_ms: h.rtt_ms,
+                items_delivered: h.items_delivered,
+                groups: h.groups.clone(),
+                group_intersection: h.group_intersection.clone(),
+                is_relay: h.is_relay,
+                protocol_version: h.protocol_version,
             })
             .collect()
     }
