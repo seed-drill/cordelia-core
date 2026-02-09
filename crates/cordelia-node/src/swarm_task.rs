@@ -93,9 +93,9 @@ fn is_owner(storage: &dyn Storage, group_id: &str, entity_id: &str) -> bool {
 }
 
 /// Merge incoming descriptors into local storage (LWW by updated_at).
-/// Verifies checksum and signature before accepting. Returns count of upserted groups.
-fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> usize {
-    let mut upserted = 0;
+/// Verifies checksum and signature before accepting. Returns IDs of upserted groups.
+fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> Vec<String> {
+    let mut upserted = Vec::new();
     for desc in descriptors {
         // Verify checksum integrity
         if !desc.verify_checksum() {
@@ -192,7 +192,7 @@ fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> 
                     signed = desc.signature.is_some(),
                     "net: merged group descriptor from peer"
                 );
-                upserted += 1;
+                upserted.push(desc.id.clone());
             }
             Err(e) => {
                 tracing::warn!(
@@ -674,7 +674,7 @@ pub async fn run_swarm_loop(
                                 }
                             }
                         }
-                        handle_behaviour_event(
+                        let _merged = handle_behaviour_event(
                             ev,
                             &mut swarm,
                             &event_tx,
@@ -687,6 +687,10 @@ pub async fn run_swarm_loop(
                             &node_identity,
                             &our_entity_id,
                         );
+                        // Note: merged descriptors are written to storage for metadata
+                        // tracking (cultures, signatures) but do NOT enter shared_groups.
+                        // Only groups created via our API or provisioned at startup belong
+                        // in shared_groups. Relay nodes use relay_learned_groups instead.
                     }
                     _ => {}
                 }
@@ -735,7 +739,8 @@ fn handle_behaviour_event(
     >,
     node_identity: &Arc<NodeIdentity>,
     our_entity_id: &str,
-) {
+) -> Vec<String> {
+    let mut merged_groups = Vec::new();
     match event {
         // -- Ping --
         CordeliaBehaviourEvent::Ping(libp2p::ping::Event {
@@ -923,13 +928,15 @@ fn handle_behaviour_event(
 
             // Merge incoming descriptors from peer (R4-030)
             if let Some(ref descs) = request.descriptors {
-                let merged = merge_descriptors(storage.as_ref(), descs);
-                if merged > 0 {
+                let new_groups = merge_descriptors(storage.as_ref(), descs);
+                if !new_groups.is_empty() {
                     tracing::info!(
                         %peer,
-                        merged,
+                        merged = new_groups.len(),
+                        groups = ?new_groups,
                         "net: merged group descriptors from peer request"
                     );
+                    merged_groups.extend(new_groups);
                 }
             }
 
@@ -952,9 +959,14 @@ fn handle_behaviour_event(
         }) => {
             // Merge incoming descriptors from peer response (R4-030)
             if let Some(ref descs) = response.descriptors {
-                let merged = merge_descriptors(storage.as_ref(), descs);
-                if merged > 0 {
-                    tracing::info!(merged, "net: merged group descriptors from peer response");
+                let new_groups = merge_descriptors(storage.as_ref(), descs);
+                if !new_groups.is_empty() {
+                    tracing::info!(
+                        merged = new_groups.len(),
+                        groups = ?new_groups,
+                        "net: merged group descriptors from peer response"
+                    );
+                    merged_groups.extend(new_groups);
                 }
             }
 
@@ -1000,6 +1012,7 @@ fn handle_behaviour_event(
         // Catch-all for remaining events (ping failures, identify push, etc.)
         _ => {}
     }
+    merged_groups
 }
 
 // ============================================================================

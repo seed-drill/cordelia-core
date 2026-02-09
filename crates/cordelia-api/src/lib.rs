@@ -569,10 +569,31 @@ async fn l2_delete(
         return e.into_response();
     }
 
+    // Read metadata before delete to get group_id for tombstone replication
+    let meta = state.storage.read_l2_item_meta(&req.item_id).ok().flatten();
+
     match state.storage.delete_l2_item(&req.item_id) {
         Ok(true) => {
             tracing::info!(item_id = req.item_id, "mem: l2 item deleted");
-            // TODO: trigger tombstone replication
+            // Tombstone replication: notify peers to delete this item
+            if let Some(ref meta) = meta {
+                if let (Some(tx), Some(group_id)) = (&state.write_notify, &meta.group_id) {
+                    let _ = tx.send(WriteNotification {
+                        item_id: req.item_id.clone(),
+                        item_type: "__tombstone__".into(),
+                        group_id: Some(group_id.clone()),
+                        data: Vec::new(),
+                        key_version: meta.key_version as u32,
+                        parent_id: None,
+                        is_copy: false,
+                    });
+                    tracing::info!(
+                        item_id = req.item_id,
+                        group = group_id.as_str(),
+                        "mem: tombstone replication triggered"
+                    );
+                }
+            }
             Json(serde_json::json!({ "ok": true })).into_response()
         }
         Ok(false) => (StatusCode::NOT_FOUND, "not found").into_response(),

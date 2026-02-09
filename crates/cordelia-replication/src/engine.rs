@@ -17,6 +17,7 @@ pub struct ReplicationEngine {
 
 /// Outbound action to send to peers.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum OutboundAction {
     /// Send full item to all hot group peers (EagerPush).
     BroadcastItem {
@@ -116,14 +117,34 @@ impl ReplicationEngine {
             ));
         }
 
-        // 3. Validate checksum
+        // 3. Handle tombstones: delete the local copy
+        if item.item_type == "__tombstone__" {
+            match storage.delete_l2_item(&item.item_id) {
+                Ok(true) => {
+                    tracing::info!(
+                        item_id = item.item_id,
+                        group_id = item.group_id,
+                        "repl: tombstone applied -- item deleted"
+                    );
+                    return ReceiveOutcome::Stored; // Treated as a successful receive
+                }
+                Ok(false) => {
+                    return ReceiveOutcome::Duplicate; // Already gone
+                }
+                Err(e) => {
+                    return ReceiveOutcome::Rejected(format!("tombstone delete failed: {e}"));
+                }
+            }
+        }
+
+        // 4. Validate checksum
         if !validate_checksum(item) {
             return ReceiveOutcome::Rejected(
                 "integrity violation: checksum mismatch -- item corrupted or tampered".into(),
             );
         }
 
-        // 4. Dedup: check if we already have this exact item
+        // 5. Dedup: check if we already have this exact item
         if let Ok(Some(existing)) = storage.read_l2_item(&item.item_id) {
             if existing.checksum.as_deref() == Some(&item.checksum) {
                 return ReceiveOutcome::Duplicate;
@@ -135,7 +156,7 @@ impl ReplicationEngine {
             }
         }
 
-        // 5. Store the item (encrypted blob, no decryption)
+        // 6. Store the item (encrypted blob, no decryption)
         let write = L2ItemWrite {
             id: item.item_id.clone(),
             item_type: item.item_type.clone(),
@@ -153,7 +174,7 @@ impl ReplicationEngine {
             return ReceiveOutcome::Rejected(format!("storage error: {e}"));
         }
 
-        // 6. Log access
+        // 7. Log access
         let _ = storage.log_access(&cordelia_storage::AccessLogEntry {
             entity_id: item.author_id.clone(),
             action: "replicate_receive".into(),
@@ -499,5 +520,97 @@ mod tests {
         };
         let result = engine.on_receive(&db, &xorg_item, &[], Some(&dynamic));
         assert_eq!(result, ReceiveOutcome::Stored);
+    }
+
+    #[test]
+    fn test_on_receive_tombstone_deletes_item() {
+        let engine = default_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let db = cordelia_storage::SqliteStorage::create_new(&dir.path().join("test.db")).unwrap();
+
+        // First, store an item
+        let data = b"will-be-deleted";
+        let item = FetchedItem {
+            item_id: "doomed-1".into(),
+            item_type: "entity".into(),
+            encrypted_blob: data.to_vec(),
+            checksum: checksum(data),
+            author_id: "russell".into(),
+            group_id: "seed-drill".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-01T00:00:00Z".into(),
+        };
+        let result = engine.on_receive(&db, &item, &["seed-drill".into()], None);
+        assert_eq!(result, ReceiveOutcome::Stored);
+
+        // Verify item exists
+        assert!(db.read_l2_item("doomed-1").unwrap().is_some());
+
+        // Send tombstone
+        let tombstone = FetchedItem {
+            item_id: "doomed-1".into(),
+            item_type: "__tombstone__".into(),
+            encrypted_blob: Vec::new(),
+            checksum: checksum(b""),
+            author_id: "russell".into(),
+            group_id: "seed-drill".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-09T00:00:00Z".into(),
+        };
+        let result = engine.on_receive(&db, &tombstone, &["seed-drill".into()], None);
+        assert_eq!(result, ReceiveOutcome::Stored);
+
+        // Verify item is deleted
+        assert!(db.read_l2_item("doomed-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_on_receive_tombstone_for_missing_item() {
+        let engine = default_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let db = cordelia_storage::SqliteStorage::create_new(&dir.path().join("test.db")).unwrap();
+
+        // Tombstone for item that doesn't exist locally
+        let tombstone = FetchedItem {
+            item_id: "never-existed".into(),
+            item_type: "__tombstone__".into(),
+            encrypted_blob: Vec::new(),
+            checksum: checksum(b""),
+            author_id: "russell".into(),
+            group_id: "seed-drill".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-09T00:00:00Z".into(),
+        };
+        let result = engine.on_receive(&db, &tombstone, &["seed-drill".into()], None);
+        assert_eq!(result, ReceiveOutcome::Duplicate); // Already gone
+    }
+
+    #[test]
+    fn test_on_receive_tombstone_rejected_not_member() {
+        let engine = default_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let db = cordelia_storage::SqliteStorage::create_new(&dir.path().join("test.db")).unwrap();
+
+        // Tombstone for a group we're not a member of
+        let tombstone = FetchedItem {
+            item_id: "foreign-1".into(),
+            item_type: "__tombstone__".into(),
+            encrypted_blob: Vec::new(),
+            checksum: checksum(b""),
+            author_id: "attacker".into(),
+            group_id: "foreign-group".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-09T00:00:00Z".into(),
+        };
+        let result = engine.on_receive(&db, &tombstone, &["seed-drill".into()], None);
+        assert!(matches!(result, ReceiveOutcome::Rejected(_)));
     }
 }

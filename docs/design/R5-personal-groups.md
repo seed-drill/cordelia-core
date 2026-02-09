@@ -3,7 +3,7 @@
 **Status**: Draft
 **Author**: Russell Wing, Claude (Opus 4.5)
 **Date**: 2026-02-04
-**Depends on**: R2-006 (Group Model), R4-030 (Group Metadata Replication)
+**Depends on**: R2-006 (Group Model, DONE), R4-030 (Group Metadata Replication, DONE), R3-028 (Dynamic shared_groups, DONE)
 **Supersedes**: The private/group storage split introduced in R2
 
 ---

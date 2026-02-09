@@ -56,3 +56,20 @@ cordelia-node (Rust)
 | `access_log` + `audit` | Access tracking and audit trail |
 | `integrity_canary` | Tamper detection |
 | `schema_version` | Migration tracking |
+
+## Replication Model
+
+**Group-scoped items replicate. Private items do not.** This is by design.
+
+Items with `group_id = NULL` (visibility = 'private') never enter the replication
+engine. The replication engine's `on_receive()` enforces group membership, and the
+API's `WriteNotification` only fires for items with a `group_id`. This means:
+
+- L2 items written without a group are local-only (no P2P sync)
+- L1 hot context (stored in `l1_hot` table) does not replicate
+- Only group-scoped items participate in culture-governed replication
+
+**R5 Personal Groups** (see `docs/design/R5-personal-groups.md`) is the planned
+unification: every item belongs to a group, "private" = personal group encrypted
+with a PSK that keepers store but cannot decrypt. Until R5 lands, private items
+exist only on the device where they were created.
