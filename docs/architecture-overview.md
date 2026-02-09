@@ -40,9 +40,9 @@ cordelia-node (Rust)
 
 1. **Claude Code** connects to proxy via stdio (MCP JSON-RPC)
 2. **Portal** connects to proxy via HTTP REST (localhost:3847)
-3. **Proxy** reads/writes SQLite directly for memory operations
-4. **Proxy** optionally connects to node for P2P network status
-5. **Node** handles QUIC transport, governor, and replication
+3. **Proxy** delegates L1/L2/group storage to node via HTTP (`CORDELIA_STORAGE=node`)
+4. **Proxy** keeps FTS, embedding cache, and audit log in local SQLite
+5. **Node** handles persistent storage, QUIC transport, governor, and replication
 
 ## Schema (SQLite v4)
 
@@ -73,3 +73,19 @@ API's `WriteNotification` only fires for items with a `group_id`. This means:
 unification: every item belongs to a group, "private" = personal group encrypted
 with a PSK that keepers store but cannot decrypt. Until R5 lands, private items
 exist only on the device where they were created.
+
+## Tombstone Replication
+
+When an L2 item is deleted via the API, a **tombstone** is broadcast to peers:
+
+- The `l2_delete` handler reads the item's `group_id` before deleting locally
+- A `WriteNotification` with `item_type = "__tombstone__"` is dispatched
+- The replication engine's eager-push path delivers the tombstone to peers
+- On receive, `on_receive()` recognises the `__tombstone__` type and deletes
+  the local copy (group membership is still enforced)
+
+Tombstones travel through the existing replication pipeline -- no separate
+protocol. The known limitation is that peers offline during the eager push
+window will not see the tombstone until a full anti-entropy sync (which
+currently does not propagate deletions). This will be addressed when
+anti-entropy gains tombstone awareness.
