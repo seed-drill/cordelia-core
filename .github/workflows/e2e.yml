@@ -38,7 +38,7 @@ jobs:
 
       - name: Run CI smoke tests
         run: |
-          docker exec -e REPORT=1 cordelia-e2e-orchestrator bash /tests/ci-smoke-test.sh
+          docker exec -e REPORT=1 cordelia-e2e-orchestrator bash -x /tests/ci-smoke-test.sh
 
       - name: Collect reports
         if: always()
