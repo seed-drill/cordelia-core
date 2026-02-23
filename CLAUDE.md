@@ -1,3 +1,57 @@
+# Cordelia -- Persistent Memory for AI Agents
+
+**cordelia-core** -- Rust P2P node: storage, replication, wire protocol, governor.
+
+Push back when something is wrong. Flag technical debt, architectural concerns, and safety issues before implementing.
+
+## Team
+
+| Name | Role | GitHub |
+|------|------|--------|
+| Russell Wing | Co-Founder | @russwing |
+| Martin Stevens | Co-Founder | @budgester |
+
+## Cross-Repo Architecture
+
+| Repo | Purpose | Language | Visibility |
+|------|---------|----------|------------|
+| cordelia-core | Rust P2P node, storage, replication | Rust | public |
+| cordelia-proxy | MCP server, HTTP sidecar, dashboard | TypeScript | public |
+| cordelia-agent-sdk | Installer, hooks, skills | Shell/JS | public |
+| cordelia-portal | OAuth portal, device enrollment, vault | JS/Express | private |
+
+## Current Status
+
+R3 near-complete (S10 remaining: MCP proxy package). Portal PS8-9 next. GTM-002 blocked on polish sprint completion.
+
+**Delivery Board:** https://github.com/orgs/seed-drill/projects/1
+
+**Priority items:**
+
+1. [P2P replication e2e test](https://github.com/seed-drill/cordelia-core/issues/4) -- prove propagation across local + Fly nodes
+2. [Group invites](https://github.com/seed-drill/cordelia-portal/issues/2) -- invite-by-link, user directory, entity discovery
+3. [Vault + device polish](https://github.com/seed-drill/cordelia-portal/issues/3) -- passphrase strength, device removal
+4. [MCP proxy package](https://github.com/seed-drill/cordelia-proxy/issues/10) -- thin stdio proxy for multi-agent support
+5. [E2E test harness](https://github.com/seed-drill/cordelia-core/issues/5) -- Docker orchestrator for CI
+
+## Shared Conventions
+
+- Commit format: `type: description` (feat/fix/docs/refactor/chore), under 72 chars
+- Co-author line: `Co-Authored-By: Claude <model> <noreply@anthropic.com>`
+- Never commit secrets (.env, credentials, keys)
+- Never force push to main
+- No emojis unless requested
+
+## What Goes Where
+
+- P2P protocol, storage, replication -> cordelia-core
+- MCP tools, search, encryption, dashboard -> cordelia-proxy
+- Install scripts, hooks, agent integration -> cordelia-agent-sdk
+- Web UI, OAuth, enrollment, vault -> cordelia-portal
+- Strategy, roadmap, actions, backlog -> seed-drill/strategy-and-planning
+
+---
+
 # Cordelia Core -- Claude Instructions
 
 ## Project Structure
