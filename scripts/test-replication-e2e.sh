@@ -5,7 +5,8 @@
 #   1. Write L2 item on LOCAL node -> verify it appears on FLY node
 #   2. Write L2 item on FLY node   -> verify it appears on LOCAL node
 #   3. Create group on LOCAL        -> verify it appears on FLY
-#   4. Clean up test items
+#   4. Verify group appears in groups/list on FLY
+#   5. Clean up test items
 #
 # Prerequisites:
 #   - Local cordelia-node running (127.0.0.1:9473)
@@ -14,7 +15,7 @@
 #   - Both nodes share at least one group
 #
 # Usage:
-#   ./scripts/test-replication-e2e.sh [--group GROUP_ID] [--timeout SECS] [--no-cleanup]
+#   ./scripts/test-replication-e2e.sh [--group GROUP_ID] [--timeout SECS] [--no-cleanup] [--report]
 
 set -euo pipefail
 
@@ -27,6 +28,7 @@ TEST_GROUP="${TEST_GROUP:-seed-drill}"
 POLL_INTERVAL=5
 MAX_WAIT=120  # seconds
 CLEANUP=true
+REPORT=false
 TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
 TEST_PREFIX="e2e-repl-test"
 
@@ -37,6 +39,7 @@ while [[ $# -gt 0 ]]; do
     --group)    TEST_GROUP="$2"; shift 2 ;;
     --timeout)  MAX_WAIT="$2"; shift 2 ;;
     --no-cleanup) CLEANUP=false; shift ;;
+    --report)   REPORT=true; shift ;;
     *)          echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -55,6 +58,18 @@ info() { echo -e "${CYAN}INFO${NC} $1"; }
 warn() { echo -e "${YELLOW}WARN${NC} $1"; }
 
 FAILURES=0
+
+# Timing data for --report
+declare -a REPORT_NAMES=()
+declare -a REPORT_STATUSES=()
+declare -a REPORT_LATENCIES=()
+
+record_test() {
+  local name="$1" status="$2" latency="$3"
+  REPORT_NAMES+=("$name")
+  REPORT_STATUSES+=("$status")
+  REPORT_LATENCIES+=("$latency")
+}
 
 local_api() {
   curl -s -X POST "${LOCAL_API}$1" \
@@ -145,6 +160,7 @@ TEST1_DATA="{\"item_id\":\"${TEST1_ID}\",\"type\":\"learning\",\"data\":{\"type\
 
 info "TEST 1: Local -> Fly replication"
 info "  Writing item ${TEST1_ID} to local node..."
+T1_START=$(date +%s)
 
 WRITE1=$(local_api /api/v1/l2/write "$TEST1_DATA" 2>&1) || true
 if echo "$WRITE1" | grep -q '"ok":true'; then
@@ -169,9 +185,13 @@ while [[ $ELAPSED -lt $MAX_WAIT ]]; do
 done
 
 if $FOUND; then
+  T1_LATENCY=$(( $(date +%s) - T1_START ))
   pass "  Item replicated to Fly node in ${ELAPSED}s"
+  record_test "local-to-fly" "PASS" "$T1_LATENCY"
 else
+  T1_LATENCY=$(( $(date +%s) - T1_START ))
   fail "  Item NOT found on Fly node after ${MAX_WAIT}s"
+  record_test "local-to-fly" "FAIL" "$T1_LATENCY"
 fi
 
 echo ""
@@ -183,6 +203,7 @@ TEST2_BODY="{\\\"item_id\\\":\\\"${TEST2_ID}\\\",\\\"type\\\":\\\"learning\\\",\
 
 info "TEST 2: Fly -> Local replication"
 info "  Writing item ${TEST2_ID} to Fly node..."
+T2_START=$(date +%s)
 
 WRITE2=$(fly ssh console -a "$FLY_APP" -C "sh -c 'TOKEN=\$(cat /home/cordelia/.cordelia/node-token) && curl -s -X POST http://127.0.0.1:9473/api/v1/l2/write -H \"Authorization: Bearer \$TOKEN\" -H \"Content-Type: application/json\" -d \"${TEST2_BODY}\"'" 2>/dev/null | grep -v "^Connecting to") || true
 if echo "$WRITE2" | grep -q '"ok":true'; then
@@ -207,9 +228,70 @@ while [[ $ELAPSED -lt $MAX_WAIT ]]; do
 done
 
 if $FOUND; then
+  T2_LATENCY=$(( $(date +%s) - T2_START ))
   pass "  Item replicated to local node in ${ELAPSED}s"
+  record_test "fly-to-local" "PASS" "$T2_LATENCY"
 else
+  T2_LATENCY=$(( $(date +%s) - T2_START ))
   fail "  Item NOT found on local node after ${MAX_WAIT}s"
+  record_test "fly-to-local" "FAIL" "$T2_LATENCY"
+fi
+
+echo ""
+
+# -- Test 3: Group propagation (Local -> Fly) ----------------------------------
+
+TEST3_GROUP="e2e-grp-${TIMESTAMP}"
+TEST3_MEMBER="e2e-member-${TIMESTAMP}"
+
+info "TEST 3: Group propagation (Local -> Fly)"
+info "  Creating group ${TEST3_GROUP} on local node..."
+T3_START=$(date +%s)
+
+local_api /api/v1/groups/create "{\"group_id\":\"${TEST3_GROUP}\",\"name\":\"E2E Test Group\",\"culture\":\"chatty\",\"security_policy\":\"standard\"}" >/dev/null 2>&1 || true
+local_api /api/v1/groups/add_member "{\"group_id\":\"${TEST3_GROUP}\",\"entity_id\":\"${TEST3_MEMBER}\",\"role\":\"member\"}" >/dev/null 2>&1 || true
+
+info "  Polling Fly node for group (max ${MAX_WAIT}s)..."
+ELAPSED=0
+FOUND=false
+while [[ $ELAPSED -lt $MAX_WAIT ]]; do
+  FLY_GROUP=$(fly ssh console -a "$FLY_APP" -C "sh -c 'TOKEN=\$(cat /home/cordelia/.cordelia/node-token) && curl -s -X POST http://127.0.0.1:9473/api/v1/groups/read -H \"Authorization: Bearer \$TOKEN\" -H \"Content-Type: application/json\" -d \"{\\\"group_id\\\":\\\"${TEST3_GROUP}\\\"}\"'" 2>/dev/null | grep -v "^Connecting to") || true
+  if echo "$FLY_GROUP" | grep -q '"group_id"'; then
+    FOUND=true
+    break
+  fi
+  sleep $POLL_INTERVAL
+  ELAPSED=$((ELAPSED + POLL_INTERVAL))
+  printf "  ...%ds\n" "$ELAPSED"
+done
+
+if $FOUND; then
+  T3_LATENCY=$(( $(date +%s) - T3_START ))
+  pass "  Group replicated to Fly node in ${ELAPSED}s"
+  record_test "group-propagation" "PASS" "$T3_LATENCY"
+else
+  T3_LATENCY=$(( $(date +%s) - T3_START ))
+  fail "  Group NOT found on Fly node after ${MAX_WAIT}s"
+  record_test "group-propagation" "FAIL" "$T3_LATENCY"
+fi
+
+echo ""
+
+# -- Test 4: Group list verify on Fly -----------------------------------------
+
+info "TEST 4: Verify group in /groups/list on Fly node"
+T4_START=$(date +%s)
+
+FLY_GROUPS_LIST=$(fly ssh console -a "$FLY_APP" -C "sh -c 'TOKEN=\$(cat /home/cordelia/.cordelia/node-token) && curl -s -X POST http://127.0.0.1:9473/api/v1/groups/list -H \"Authorization: Bearer \$TOKEN\" -H \"Content-Type: application/json\" -d \"{}\"'" 2>/dev/null | grep -v "^Connecting to") || true
+
+if echo "$FLY_GROUPS_LIST" | grep -q "${TEST3_GROUP}"; then
+  T4_LATENCY=$(( $(date +%s) - T4_START ))
+  pass "  Group ${TEST3_GROUP} found in Fly groups/list"
+  record_test "group-list-verify" "PASS" "$T4_LATENCY"
+else
+  T4_LATENCY=$(( $(date +%s) - T4_START ))
+  fail "  Group ${TEST3_GROUP} NOT found in Fly groups/list"
+  record_test "group-list-verify" "FAIL" "$T4_LATENCY"
 fi
 
 echo ""
@@ -217,15 +299,21 @@ echo ""
 # -- Cleanup ------------------------------------------------------------------
 
 if $CLEANUP; then
-  info "Cleaning up test items..."
+  info "Cleaning up test items and groups..."
 
-  # Delete from local
+  # Delete items from local
   local_api /api/v1/l2/delete "{\"item_id\":\"${TEST1_ID}\"}" >/dev/null 2>&1 || true
   local_api /api/v1/l2/delete "{\"item_id\":\"${TEST2_ID}\"}" >/dev/null 2>&1 || true
 
-  # Delete from Fly
+  # Delete test group from local
+  local_api /api/v1/groups/delete "{\"group_id\":\"${TEST3_GROUP}\"}" >/dev/null 2>&1 || true
+
+  # Delete items from Fly
   fly ssh console -a "$FLY_APP" -C "sh -c 'TOKEN=\$(cat /home/cordelia/.cordelia/node-token) && curl -s -X POST http://127.0.0.1:9473/api/v1/l2/delete -H \"Authorization: Bearer \$TOKEN\" -H \"Content-Type: application/json\" -d \"{\\\"item_id\\\":\\\"${TEST1_ID}\\\"}\"'" >/dev/null 2>&1 || true
   fly ssh console -a "$FLY_APP" -C "sh -c 'TOKEN=\$(cat /home/cordelia/.cordelia/node-token) && curl -s -X POST http://127.0.0.1:9473/api/v1/l2/delete -H \"Authorization: Bearer \$TOKEN\" -H \"Content-Type: application/json\" -d \"{\\\"item_id\\\":\\\"${TEST2_ID}\\\"}\"'" >/dev/null 2>&1 || true
+
+  # Delete test group from Fly
+  fly ssh console -a "$FLY_APP" -C "sh -c 'TOKEN=\$(cat /home/cordelia/.cordelia/node-token) && curl -s -X POST http://127.0.0.1:9473/api/v1/groups/delete -H \"Authorization: Bearer \$TOKEN\" -H \"Content-Type: application/json\" -d \"{\\\"group_id\\\":\\\"${TEST3_GROUP}\\\"}\"'" >/dev/null 2>&1 || true
 
   info "Cleanup complete"
 fi
@@ -245,5 +333,37 @@ echo " Group:  ${TEST_GROUP}"
 echo " Time:   ${TIMESTAMP}"
 echo "=========================================="
 echo ""
+
+# -- Report -------------------------------------------------------------------
+
+if $REPORT; then
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  REPORT_DIR="${SCRIPT_DIR}/../reports"
+  mkdir -p "$REPORT_DIR"
+  REPORT_FILE="${REPORT_DIR}/e2e-repl-${TIMESTAMP}.json"
+
+  OVERALL_STATUS="PASSED"
+  if [[ $FAILURES -gt 0 ]]; then OVERALL_STATUS="FAILED"; fi
+
+  # Build JSON tests array
+  TESTS_JSON="["
+  for i in "${!REPORT_NAMES[@]}"; do
+    if [[ $i -gt 0 ]]; then TESTS_JSON+=","; fi
+    TESTS_JSON+="{\"name\":\"${REPORT_NAMES[$i]}\",\"status\":\"${REPORT_STATUSES[$i]}\",\"latency_secs\":${REPORT_LATENCIES[$i]}}"
+  done
+  TESTS_JSON+="]"
+
+  cat > "$REPORT_FILE" <<EOF
+{
+  "test_name": "replication-e2e",
+  "status": "${OVERALL_STATUS}",
+  "environment": "fly",
+  "timestamp": "${TIMESTAMP}",
+  "tests": ${TESTS_JSON}
+}
+EOF
+
+  info "Report written to ${REPORT_FILE}"
+fi
 
 exit $FAILURES

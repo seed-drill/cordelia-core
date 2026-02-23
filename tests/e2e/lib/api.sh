@@ -89,6 +89,24 @@ EOF
     api_post "$host" "/api/v1/groups/add_member" "$body"
 }
 
+# api_read_group HOST GROUP_ID -> JSON
+api_read_group() {
+    local host="$1" group_id="$2"
+    api_post "$host" "/api/v1/groups/read" "{\"group_id\": \"${group_id}\"}"
+}
+
+# api_list_groups HOST -> JSON
+api_list_groups() {
+    local host="$1"
+    api_post "$host" "/api/v1/groups/list"
+}
+
+# api_delete_group HOST GROUP_ID -> JSON
+api_delete_group() {
+    local host="$1" group_id="$2"
+    api_post "$host" "/api/v1/groups/delete" "{\"group_id\": \"${group_id}\"}"
+}
+
 # hot_peer_count HOST -- returns count of hot peers
 hot_peer_count() {
     local host="$1"
