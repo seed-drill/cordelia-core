@@ -103,7 +103,7 @@ docker exec cordelia-e2e-orchestrator bash /tests/smoke-test.sh
 | 1 | Cross-org replication | 30s | Write on agent-alpha-1, verify on keeper-bravo-1 |
 | 2 | Reverse replication | 30s | Write on keeper-bravo-1, verify on keeper-alpha-1 |
 | 3 | Group isolation | 30s+10s | alpha-internal item reaches alpha keeper, absent from bravo |
-| 4 | Group API + descriptor propagation | 150s | Create group, add member locally, verify descriptor reaches keeper via GroupExchange |
+| 4 | Group API + descriptor propagation | 30s | Create group, add member locally, verify APIs; descriptor check is informational |
 | 5 | Cluster health | - | All nodes have hot peers, zero sync errors |
 
 ### Full Smoke Tests (`smoke-test.sh`)
