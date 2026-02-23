@@ -192,17 +192,24 @@ GRP_ID="ci-grp-${TS}"
 MEMBER_ID="ci-member-${TS}"
 
 # Create group on both alpha nodes to avoid 60s group exchange wait
+GRP_CREATE_OK=true
 for node in agent-alpha-1 keeper-alpha-1; do
-    api "$node" "groups/create" \
-        "{\"group_id\":\"${GRP_ID}\",\"name\":\"CI Test Group\",\"culture\":\"chatty\",\"security_policy\":\"standard\"}" > /dev/null 2>&1 || true
+    if ! api "$node" "groups/create" \
+        "{\"group_id\":\"${GRP_ID}\",\"name\":\"CI Test Group\",\"culture\":\"chatty\",\"security_policy\":\"standard\"}" > /dev/null 2>&1; then
+        GRP_CREATE_OK=false
+    fi
 done
 
-# Add member on agent-alpha-1
-api "agent-alpha-1" "groups/add_member" \
-    "{\"group_id\":\"${GRP_ID}\",\"entity_id\":\"${MEMBER_ID}\",\"role\":\"member\"}" > /dev/null
-
-# Verify member visible on keeper-alpha-1
-if wait_group_member "keeper-alpha-1" "$GRP_ID" "$MEMBER_ID" "$TIMEOUT"; then
+if ! $GRP_CREATE_OK; then
+    T4_LAT=$(( $(date +%s) - T4_START ))
+    fail "groups/create API not available or returned error"
+    record "group-membership-propagation" "FAIL" "$T4_LAT"
+elif ! api "agent-alpha-1" "groups/add_member" \
+    "{\"group_id\":\"${GRP_ID}\",\"entity_id\":\"${MEMBER_ID}\",\"role\":\"member\"}" > /dev/null 2>&1; then
+    T4_LAT=$(( $(date +%s) - T4_START ))
+    fail "groups/add_member API not available or returned error"
+    record "group-membership-propagation" "FAIL" "$T4_LAT"
+elif wait_group_member "keeper-alpha-1" "$GRP_ID" "$MEMBER_ID" "$TIMEOUT"; then
     T4_LAT=$(( $(date +%s) - T4_START ))
     pass "group member propagated to keeper-alpha-1 (${T4_LAT}s)"
     record "group-membership-propagation" "PASS" "$T4_LAT"
