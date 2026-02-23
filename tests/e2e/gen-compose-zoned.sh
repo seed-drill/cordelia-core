@@ -408,9 +408,7 @@ done
     cat >> "$COMPOSE_FILE" <<EOF
 
   orchestrator:
-    build:
-      context: .
-      dockerfile: Dockerfile.orchestrator
+    image: cordelia-orchestrator
     hostname: orchestrator
     container_name: cordelia-e2e-orchestrator
     volumes:

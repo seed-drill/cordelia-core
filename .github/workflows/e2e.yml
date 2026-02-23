@@ -36,14 +36,9 @@ jobs:
           echo "Waiting 20s for P2P mesh to stabilize..."
           sleep 20
 
-      - name: Verify orchestrator has latest code
-        run: |
-          docker exec cordelia-e2e-orchestrator grep -c 'set +e' /tests/ci-smoke-test.sh || echo "WARNING: set +e not found!"
-          docker exec cordelia-e2e-orchestrator head -5 /tests/ci-smoke-test.sh
-
       - name: Run CI smoke tests
         run: |
-          docker exec -e REPORT=1 cordelia-e2e-orchestrator bash -x /tests/ci-smoke-test.sh
+          docker exec -e REPORT=1 cordelia-e2e-orchestrator bash /tests/ci-smoke-test.sh
 
       - name: Collect reports
         if: always()

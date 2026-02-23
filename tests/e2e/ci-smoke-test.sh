@@ -201,6 +201,15 @@ for node in agent-alpha-1 keeper-alpha-1; do
     fi
 done
 
+# Pre-create l1_hot entry for member entity on both nodes
+# (FK constraint: group_members.entity_id -> l1_hot.user_id)
+if $GRP_CREATE_OK; then
+    for node in agent-alpha-1 keeper-alpha-1; do
+        api "$node" "l1/write" \
+            "{\"user_id\":\"${MEMBER_ID}\",\"data\":{\"type\":\"ci-test-entity\"}}" > /dev/null 2>&1 || true
+    done
+fi
+
 if ! $GRP_CREATE_OK; then
     T4_LAT=$(( $(date +%s) - T4_START ))
     fail "groups/create API not available or returned error"
