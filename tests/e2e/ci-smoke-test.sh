@@ -62,20 +62,6 @@ assert_no_item() {
     return 0
 }
 
-wait_group_member() {
-    local host="$1" group_id="$2" entity_id="$3" timeout="${4:-$TIMEOUT}"
-    local deadline=$((SECONDS + timeout))
-    while [ $SECONDS -lt $deadline ]; do
-        local result
-        result=$(api "$host" "groups/read" "{\"group_id\":\"$group_id\"}" || echo "{}")
-        if echo "$result" | jq -e ".members[] | select(.entity_id == \"${entity_id}\")" > /dev/null 2>&1; then
-            return 0
-        fi
-        sleep 3
-    done
-    return 1
-}
-
 # Timing
 declare -a R_NAMES=()
 declare -a R_STATUSES=()
@@ -184,49 +170,80 @@ else
 fi
 echo ""
 
-# --- Test 4: Group membership propagation [4] --------------------------------
+# --- Test 4: Group API + descriptor propagation [4] --------------------------
+# Note: group MEMBERS are local-only by design (R4-030). Only group
+# DESCRIPTORS (id, culture, signature) propagate via GroupExchange protocol.
+# This test verifies: (a) groups API works, (b) descriptor reaches another node.
 
-echo "[4] Group membership propagation..."
+echo "[4] Group API + descriptor propagation..."
 set +e
 T4_START=$(date +%s)
 GRP_ID="ci-grp-${TS}"
 MEMBER_ID="ci-member-${TS}"
+T4_OK=true
 
-# Create group on both alpha nodes to avoid 60s group exchange wait
-GRP_CREATE_OK=true
-for node in agent-alpha-1 keeper-alpha-1; do
-    if ! api "$node" "groups/create" \
-        "{\"group_id\":\"${GRP_ID}\",\"name\":\"CI Test Group\",\"culture\":\"chatty\",\"security_policy\":\"standard\"}" > /dev/null 2>&1; then
-        GRP_CREATE_OK=false
-    fi
-done
-
-# Pre-create l1_hot entry for member entity on both nodes
-# (FK constraint: group_members.entity_id -> l1_hot.user_id)
-if $GRP_CREATE_OK; then
-    for node in agent-alpha-1 keeper-alpha-1; do
-        api "$node" "l1/write" \
-            "{\"user_id\":\"${MEMBER_ID}\",\"data\":{\"type\":\"ci-test-entity\"}}" > /dev/null 2>&1 || true
-    done
+# 4a: Create group on agent-alpha-1
+if ! api "agent-alpha-1" "groups/create" \
+    "{\"group_id\":\"${GRP_ID}\",\"name\":\"CI Test Group\",\"culture\":\"chatty\",\"security_policy\":\"standard\"}" > /dev/null 2>&1; then
+    fail "groups/create failed on agent-alpha-1"
+    T4_OK=false
+else
+    pass "groups/create succeeded"
 fi
 
-if ! $GRP_CREATE_OK; then
-    T4_LAT=$(( $(date +%s) - T4_START ))
-    fail "groups/create API not available or returned error"
-    record "group-membership-propagation" "FAIL" "$T4_LAT"
-elif ! api "agent-alpha-1" "groups/add_member" \
-    "{\"group_id\":\"${GRP_ID}\",\"entity_id\":\"${MEMBER_ID}\",\"role\":\"member\"}" > /dev/null 2>&1; then
-    T4_LAT=$(( $(date +%s) - T4_START ))
-    fail "groups/add_member API not available or returned error"
-    record "group-membership-propagation" "FAIL" "$T4_LAT"
-elif wait_group_member "keeper-alpha-1" "$GRP_ID" "$MEMBER_ID" "$TIMEOUT"; then
-    T4_LAT=$(( $(date +%s) - T4_START ))
-    pass "group member propagated to keeper-alpha-1 (${T4_LAT}s)"
-    record "group-membership-propagation" "PASS" "$T4_LAT"
+# 4b: Add member locally (verify FK + add_member API)
+if $T4_OK; then
+    # Pre-create l1_hot entry (FK: group_members.entity_id -> l1_hot.user_id)
+    api "agent-alpha-1" "l1/write" \
+        "{\"user_id\":\"${MEMBER_ID}\",\"data\":{\"type\":\"ci-test-entity\"}}" > /dev/null 2>&1 || true
+
+    if ! api "agent-alpha-1" "groups/add_member" \
+        "{\"group_id\":\"${GRP_ID}\",\"entity_id\":\"${MEMBER_ID}\",\"role\":\"member\"}" > /dev/null 2>&1; then
+        fail "groups/add_member failed on agent-alpha-1"
+        T4_OK=false
+    else
+        pass "groups/add_member succeeded"
+    fi
+fi
+
+# 4c: Read group back, verify member is present locally
+if $T4_OK; then
+    local_read=$(api "agent-alpha-1" "groups/read" "{\"group_id\":\"${GRP_ID}\"}" 2>/dev/null || echo "{}")
+    if echo "$local_read" | jq -e ".members[] | select(.entity_id == \"${MEMBER_ID}\")" > /dev/null 2>&1; then
+        pass "member visible in local groups/read"
+    else
+        fail "member NOT visible in local groups/read"
+        T4_OK=false
+    fi
+fi
+
+# 4d: Verify group descriptor propagated to keeper-alpha-1 via GroupExchange
+# GroupExchange runs every ~60s, so use a longer timeout
+if $T4_OK; then
+    GX_TIMEOUT=90
+    deadline=$((SECONDS + GX_TIMEOUT))
+    GX_FOUND=false
+    while [ $SECONDS -lt $deadline ]; do
+        grp_list=$(api "keeper-alpha-1" "groups/list" '{}' 2>/dev/null || echo "[]")
+        if echo "$grp_list" | jq -e ".[] | select(.id == \"${GRP_ID}\")" > /dev/null 2>&1; then
+            GX_FOUND=true
+            break
+        fi
+        sleep 5
+    done
+    if $GX_FOUND; then
+        pass "group descriptor propagated to keeper-alpha-1"
+    else
+        fail "group descriptor NOT propagated to keeper-alpha-1 after ${GX_TIMEOUT}s"
+        T4_OK=false
+    fi
+fi
+
+T4_LAT=$(( $(date +%s) - T4_START ))
+if $T4_OK; then
+    record "group-descriptor-propagation" "PASS" "$T4_LAT"
 else
-    T4_LAT=$(( $(date +%s) - T4_START ))
-    fail "group member NOT propagated to keeper-alpha-1 after ${TIMEOUT}s"
-    record "group-membership-propagation" "FAIL" "$T4_LAT"
+    record "group-descriptor-propagation" "FAIL" "$T4_LAT"
 fi
 set -e
 echo ""
