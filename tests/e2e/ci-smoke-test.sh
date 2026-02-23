@@ -218,9 +218,9 @@ if $T4_OK; then
 fi
 
 # 4d: Verify group descriptor propagated to keeper-alpha-1 via GroupExchange
-# GroupExchange runs every ~60s, so use a longer timeout
+# GroupExchange runs every ~60s per hop; agent -> edge -> keeper = 2 hops = ~120s worst case
 if $T4_OK; then
-    GX_TIMEOUT=90
+    GX_TIMEOUT=150
     deadline=$((SECONDS + GX_TIMEOUT))
     GX_FOUND=false
     while [ $SECONDS -lt $deadline ]; do
