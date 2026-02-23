@@ -20,7 +20,7 @@ jobs:
         run: docker build -t cordelia-node:test -f tests/e2e/Dockerfile.test .
 
       - name: Build orchestrator image
-        run: docker build -t cordelia-orchestrator -f tests/e2e/Dockerfile.orchestrator tests/e2e/
+        run: docker build --no-cache -t cordelia-orchestrator -f tests/e2e/Dockerfile.orchestrator tests/e2e/
 
       - name: Generate CI topology
         run: |
