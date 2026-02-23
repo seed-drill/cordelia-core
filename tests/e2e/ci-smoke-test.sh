@@ -187,6 +187,7 @@ echo ""
 # --- Test 4: Group membership propagation [4] --------------------------------
 
 echo "[4] Group membership propagation..."
+set +e
 T4_START=$(date +%s)
 GRP_ID="ci-grp-${TS}"
 MEMBER_ID="ci-member-${TS}"
@@ -218,6 +219,7 @@ else
     fail "group member NOT propagated to keeper-alpha-1 after ${TIMEOUT}s"
     record "group-membership-propagation" "FAIL" "$T4_LAT"
 fi
+set -e
 echo ""
 
 # --- Test 5: Cluster health [5] ---------------------------------------------
