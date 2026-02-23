@@ -22,17 +22,21 @@ Push back when something is wrong. Flag technical debt, architectural concerns, 
 
 ## Current Status
 
-R3 near-complete (S10 remaining: MCP proxy package). Portal PS8-9 next. GTM-002 blocked on polish sprint completion.
+R3 near-complete (S10 remaining: MCP proxy package). Portal PS8-9 next. E2E CI pipeline green (15/0, 3m31s on self-hosted runner).
 
 **Delivery Board:** https://github.com/orgs/seed-drill/projects/1
 
 **Priority items:**
 
-1. [P2P replication e2e test](https://github.com/seed-drill/cordelia-core/issues/4) -- prove propagation across local + Fly nodes
-2. [Group invites](https://github.com/seed-drill/cordelia-portal/issues/2) -- invite-by-link, user directory, entity discovery
-3. [Vault + device polish](https://github.com/seed-drill/cordelia-portal/issues/3) -- passphrase strength, device removal
-4. [MCP proxy package](https://github.com/seed-drill/cordelia-proxy/issues/10) -- thin stdio proxy for multi-agent support
-5. [E2E test harness](https://github.com/seed-drill/cordelia-core/issues/5) -- Docker orchestrator for CI
+1. [Review P2P network design](https://github.com/seed-drill/cordelia-core/issues/7) -- memory/group propagation lifecycle, documentation gaps
+2. [GroupExchange investigation](https://github.com/seed-drill/cordelia-core/issues/6) -- API-created groups don't propagate to peers
+3. [Group invites](https://github.com/seed-drill/cordelia-portal/issues/2) -- invite-by-link, user directory, entity discovery
+4. [Vault + device polish](https://github.com/seed-drill/cordelia-portal/issues/3) -- passphrase strength, device removal
+5. [E2E test harness](https://github.com/seed-drill/cordelia-core/issues/5) -- Docker orchestrator optimisation
+
+**Recently completed:**
+
+- [P2P replication e2e test](https://github.com/seed-drill/cordelia-core/issues/4) -- CI smoke suite, 7-node Docker topology, org-wide runner
 
 ## Shared Conventions
 
