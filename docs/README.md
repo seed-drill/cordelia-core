@@ -28,6 +28,7 @@ Append-only decision records. Audience: contributors.
 | [Memory Architecture](design/memory-architecture.md) | Three-domain model (values/procedural/interrupt), schema-free wire protocol |
 | [Replication Routing](design/replication-routing.md) | Three-gate routing model, relay behaviour, deployment patterns, timing |
 | [Member Removal](design/member-removal.md) | Soft removal (R4), threat model, hard removal with key rotation (R5) |
+| [Metadata Privacy](design/metadata-privacy.md) | Relay metadata inventory, traffic analysis, comparison with Signal/Tor/Matrix, mitigation options |
 
 ## Reference -- "Look it up"
 

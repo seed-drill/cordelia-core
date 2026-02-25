@@ -242,6 +242,7 @@ The current model assumes: if you have local machine access and the encryption k
 4. **Side channels** - Timing, power analysis etc. not addressed
 5. **No vessel attestation** - Cannot cryptographically prove which model/instance is running
 6. **SharedKeyVault** - All founders share one key in R2. Accepted for 3 trusted users. R3 envelope encryption resolves.
+7. **Metadata plaintext on wire** - group_id, author_id, item_type, timestamps, blob size visible to relays. See [Metadata Privacy Analysis](../design/metadata-privacy.md) for full inventory, traffic analysis, and mitigation options.
 
 ## Adversarial Memory Injection Analysis ("Snow Crash" Vector)
 

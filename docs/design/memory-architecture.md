@@ -416,16 +416,21 @@ The network carries exactly this:
 │  Wire Envelope (plaintext metadata)         │
 │                                             │
 │  item_id       : opaque GUID               │
-│  group_id      : SHA-256(group URI)         │
-│  author_id     : SHA-256(Ed25519 pubkey)    │
-│  timestamp     : uint64 (Unix ms)          │
+│  group_id      : plaintext string [1]       │
+│  author_id     : plaintext string [1]       │
+│  item_type     : plaintext string [2]       │
+│  timestamp     : ISO 8601 string           │
 │  content_hash  : SHA-256(encrypted_blob)    │
 │  encrypted_blob: opaque bytes               │
 │                                             │
 └─────────────────────────────────────────────┘
 ```
 
-Six fields. No type, no domain, no schema version, no TTL. The blob is opaque
+> **[1] Implementation note:** This document originally specified `SHA-256(group URI)` and `SHA-256(Ed25519 pubkey)` for group_id and author_id. The implementation uses plaintext strings because (a) relay routing requires readable group_id for three-gate filtering, and (b) hashing provides limited benefit when group membership is observable via GroupExchange. See [Metadata Privacy Analysis](metadata-privacy.md) Section 2.5 for the full rationale.
+>
+> **[2] Implementation note:** `item_type` (entity/session/learning) was added to the wire protocol in R4 for tombstone detection and content-type filtering. This was not in the original minimal envelope design.
+
+Seven fields. No domain, no schema version, no TTL. The blob is opaque
 to every node except the entity (or group members) that hold the decryption key.
 
 ### Layer Responsibilities
