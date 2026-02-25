@@ -1,0 +1,67 @@
+name: Resilience Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  resilience:
+    name: Partition Recovery & Split-Brain
+    runs-on: [self-hosted, cordelia-docker]
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build node image
+        run: docker build -t cordelia-node:test -f tests/e2e/Dockerfile.test .
+
+      - name: Build orchestrator image
+        run: docker build --no-cache -t cordelia-orchestrator -f tests/e2e/Dockerfile.orchestrator tests/e2e/
+
+      - name: Generate CI topology
+        run: |
+          cp tests/e2e/topology-ci.env tests/e2e/topology.env
+          bash tests/e2e/gen-compose-zoned.sh
+
+      - name: Start cluster
+        run: docker compose -f tests/e2e/docker-compose.generated.yml up -d --wait
+        timeout-minutes: 3
+
+      - name: Wait for mesh convergence
+        run: |
+          echo "Waiting 30s for P2P mesh to stabilize..."
+          sleep 30
+
+      - name: Run resilience tests
+        run: REPORT=1 bash tests/e2e/resilience-test.sh
+
+      - name: Capture node logs on failure
+        if: failure()
+        run: |
+          mkdir -p reports/logs
+          for node in boot1 boot2 edge-alpha-1 edge-bravo-1 keeper-alpha-1 keeper-bravo-1 agent-alpha-1; do
+            echo "--- ${node} (last 100 lines) ---"
+            docker logs "cordelia-e2e-${node}" --tail 100 2>&1 | tee "reports/logs/${node}.log" || true
+            echo ""
+          done
+
+      - name: Collect reports
+        if: always()
+        run: |
+          mkdir -p reports
+          docker cp cordelia-e2e-orchestrator:/tests/reports/ reports/ 2>/dev/null || true
+          cp tests/e2e/reports/*.json reports/ 2>/dev/null || true
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: resilience-reports
+          path: reports/
+          retention-days: 30
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker compose -f tests/e2e/docker-compose.generated.yml down -v --remove-orphans 2>/dev/null || true
+          docker image prune -f 2>/dev/null || true

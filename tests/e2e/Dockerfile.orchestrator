@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /tests
 
 # Copy test scripts, helpers, and libraries
-COPY monitor.sh test-zoned-replication.sh smoke-test.sh ci-smoke-test.sh topology.env topology-ci.env ./
+COPY monitor.sh test-zoned-replication.sh smoke-test.sh ci-smoke-test.sh resilience-test.sh topology.env topology-ci.env ./
 COPY lib/ ./lib/
 COPY tests/ ./tests/
 RUN chmod +x *.sh tests/*.sh lib/*.sh
