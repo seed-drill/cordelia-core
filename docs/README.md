@@ -36,7 +36,7 @@ Specifications and lookup tables. Audience: integrators, operators.
 |----------|-------------|
 | [Protocol Specification](reference/protocol.md) | Crate structure, peer protocol, message types, mini-protocols |
 | [Requirements](reference/requirements.md) | Formal requirements (FR/NFR/IR/TR) with verification criteria |
-| API Reference | HTTP endpoints on port 9473 -- **planned** ([#9](https://github.com/seed-drill/cordelia-core/issues/9)) |
+| [API Reference](reference/api.md) | HTTP endpoints on port 9473 -- request/response shapes, defaults, errors, side effects |
 | Config Reference | config.toml fields, defaults, valid ranges -- **planned** ([#10](https://github.com/seed-drill/cordelia-core/issues/10)) |
 
 ## Operations -- "How to run it"
