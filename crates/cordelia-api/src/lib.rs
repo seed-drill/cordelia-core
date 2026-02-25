@@ -699,7 +699,13 @@ async fn groups_list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
     }
 
     match state.storage.list_groups() {
-        Ok(groups) => Json(serde_json::json!({ "groups": groups })).into_response(),
+        Ok(groups) => {
+            let live: Vec<_> = groups
+                .into_iter()
+                .filter(|g| g.culture != cordelia_protocol::messages::GROUP_TOMBSTONE_CULTURE)
+                .collect();
+            Json(serde_json::json!({ "groups": live })).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -714,6 +720,12 @@ async fn groups_read(
     }
 
     match state.storage.read_group(&req.group_id) {
+        Ok(Some(group))
+            if group.culture
+                == cordelia_protocol::messages::GROUP_TOMBSTONE_CULTURE =>
+        {
+            (StatusCode::NOT_FOUND, "group not found").into_response()
+        }
         Ok(Some(group)) => {
             let members = state
                 .storage
@@ -757,35 +769,56 @@ async fn groups_delete(
         return e.into_response();
     }
 
-    match state.storage.delete_group(&req.group_id) {
-        Ok(true) => {
-            tracing::info!(group_id = req.group_id, "mem: group deleted");
-            // Remove from shared dynamic groups
-            if let Some(shared) = &state.shared_groups {
-                let mut groups = shared.write().await;
-                groups.retain(|g| g != &req.group_id);
-                tracing::info!(
-                    group_id = req.group_id,
-                    remaining_groups = groups.len(),
-                    "mem: group removed from shared_groups"
-                );
-            }
-
-            // Log access
-            let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
-                entity_id: state.entity_id.clone(),
-                action: "delete_group".into(),
-                resource_type: "group".into(),
-                resource_id: Some(req.group_id.clone()),
-                group_id: Some(req.group_id),
-                detail: None,
-            });
-
-            Json(serde_json::json!({ "ok": true })).into_response()
+    // Check group exists
+    match state.storage.read_group(&req.group_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "group not found").into_response(),
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
-        Ok(false) => (StatusCode::NOT_FOUND, "group not found").into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+
+    // Write tombstone descriptor (culture = __deleted__) instead of deleting.
+    // This propagates via GroupExchange to peers using LWW semantics.
+    let tombstone_culture = cordelia_protocol::messages::GROUP_TOMBSTONE_CULTURE;
+    if let Err(e) = state
+        .storage
+        .write_group(&req.group_id, &req.group_id, tombstone_culture, "{}")
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+
+    // Delete members locally
+    if let Ok(members) = state.storage.list_members(&req.group_id) {
+        for m in members {
+            let _ = state.storage.remove_member(&req.group_id, &m.entity_id);
+        }
+    }
+
+    tracing::info!(group_id = req.group_id, "mem: group tombstoned for deletion");
+
+    // Remove from shared dynamic groups (stops item replication)
+    if let Some(shared) = &state.shared_groups {
+        let mut groups = shared.write().await;
+        groups.retain(|g| g != &req.group_id);
+        tracing::info!(
+            group_id = req.group_id,
+            remaining_groups = groups.len(),
+            "mem: group removed from shared_groups"
+        );
+    }
+
+    // Log access
+    let _ = state.storage.log_access(&cordelia_storage::AccessLogEntry {
+        entity_id: state.entity_id.clone(),
+        action: "delete_group".into(),
+        resource_type: "group".into(),
+        resource_id: Some(req.group_id.clone()),
+        group_id: Some(req.group_id),
+        detail: Some("tombstone".into()),
+    });
+
+    Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 async fn groups_add_member(

@@ -169,6 +169,8 @@ pub trait Storage: Send + Sync {
     fn update_member_posture(&self, group_id: &str, entity_id: &str, posture: &str)
         -> Result<bool>;
     fn delete_group(&self, id: &str) -> Result<bool>;
+    /// Remove groups with tombstone culture older than retention_days.
+    fn purge_deleted_groups(&self, tombstone_culture: &str, retention_days: u32) -> Result<u32>;
 
     fn log_access(&self, entry: &AccessLogEntry) -> Result<()>;
 
@@ -715,6 +717,25 @@ impl Storage for SqliteStorage {
         conn.execute("DELETE FROM group_members WHERE group_id = ?1", params![id])?;
         let changes = conn.execute("DELETE FROM groups WHERE id = ?1", params![id])?;
         Ok(changes > 0)
+    }
+
+    fn purge_deleted_groups(&self, tombstone_culture: &str, retention_days: u32) -> Result<u32> {
+        let conn = self.db()?;
+        // Delete members first, then groups with tombstone culture older than retention
+        let cutoff = format!("-{retention_days} days");
+        conn.execute(
+            "DELETE FROM group_members WHERE group_id IN (
+                SELECT id FROM groups WHERE culture = ?1
+                AND updated_at < datetime('now', ?2)
+            )",
+            params![tombstone_culture, cutoff],
+        )?;
+        let changes = conn.execute(
+            "DELETE FROM groups WHERE culture = ?1
+             AND updated_at < datetime('now', ?2)",
+            params![tombstone_culture, cutoff],
+        )?;
+        Ok(changes as u32)
     }
 
     fn log_access(&self, entry: &AccessLogEntry) -> Result<()> {

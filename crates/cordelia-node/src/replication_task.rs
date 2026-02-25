@@ -76,6 +76,11 @@ pub async fn run_replication_loop(
     flush_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     flush_tick.tick().await;
 
+    // Group tombstone GC: purge deleted groups past retention (daily check)
+    let mut gc_tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+    gc_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    gc_tick.tick().await;
+
     tracing::info!("replication loop started");
 
     loop {
@@ -433,6 +438,19 @@ pub async fn run_replication_loop(
                             "repl: bootstrap sync failed (will retry on next anti-entropy cycle)"
                         );
                     }
+                }
+            }
+
+            // Group tombstone garbage collection (daily)
+            _ = gc_tick.tick() => {
+                let retention = engine.tombstone_retention_days();
+                match storage.purge_deleted_groups(
+                    cordelia_protocol::messages::GROUP_TOMBSTONE_CULTURE,
+                    retention,
+                ) {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(purged = n, retention_days = retention, "repl: purged expired group tombstones"),
+                    Err(e) => tracing::warn!(error = %e, "repl: group tombstone GC failed"),
                 }
             }
 

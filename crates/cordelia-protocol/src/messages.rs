@@ -134,7 +134,16 @@ pub struct GroupDescriptor {
     pub signature: Option<String>,
 }
 
+/// Sentinel culture value indicating a group has been deleted (tombstone).
+/// Propagates via GroupExchange using LWW semantics.
+pub const GROUP_TOMBSTONE_CULTURE: &str = "__deleted__";
+
 impl GroupDescriptor {
+    /// Returns true if this descriptor is a deletion tombstone.
+    pub fn is_tombstone(&self) -> bool {
+        self.culture == GROUP_TOMBSTONE_CULTURE
+    }
+
     /// Compute the canonical checksum for a group descriptor.
     pub fn compute_checksum(id: &str, culture: &str) -> String {
         use sha2::{Digest, Sha256};

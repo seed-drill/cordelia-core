@@ -200,6 +200,11 @@ impl ReplicationEngine {
         self.config.max_batch_size
     }
 
+    /// Tombstone retention period for GC.
+    pub fn tombstone_retention_days(&self) -> u32 {
+        self.config.tombstone_retention_days
+    }
+
     /// Access the replication config.
     pub fn config(&self) -> &ReplicationConfig {
         &self.config

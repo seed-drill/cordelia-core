@@ -92,10 +92,19 @@ fn is_owner(storage: &dyn Storage, group_id: &str, entity_id: &str) -> bool {
         .is_some_and(|m| m.role == "owner")
 }
 
+/// Result of merging group descriptors from a peer.
+struct MergeResult {
+    /// Group IDs that were upserted (new or updated).
+    upserted: Vec<String>,
+    /// Group IDs that were tombstoned (deletion propagated from owner).
+    tombstoned: Vec<String>,
+}
+
 /// Merge incoming descriptors into local storage (LWW by updated_at).
-/// Verifies checksum and signature before accepting. Returns IDs of upserted groups.
-fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> Vec<String> {
+/// Verifies checksum and signature before accepting.
+fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> MergeResult {
     let mut upserted = Vec::new();
+    let mut tombstoned = Vec::new();
     for desc in descriptors {
         // Verify checksum integrity
         if !desc.verify_checksum() {
@@ -106,8 +115,8 @@ fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> 
             continue;
         }
 
-        // Culture size limit (4KB as per R4-030)
-        if desc.culture.len() > 4096 {
+        // Culture size limit (4KB as per R4-030). Tombstones are always small.
+        if desc.culture.len() > 4096 && !desc.is_tombstone() {
             tracing::warn!(
                 group_id = %desc.id,
                 culture_len = desc.culture.len(),
@@ -187,12 +196,27 @@ fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> 
                 {
                     let _ = storage.write_group_signature(&desc.id, oid, pk, sig);
                 }
-                tracing::debug!(
-                    group_id = %desc.id,
-                    signed = desc.signature.is_some(),
-                    "net: merged group descriptor from peer"
-                );
-                upserted.push(desc.id.clone());
+
+                if desc.is_tombstone() {
+                    // Tombstone: delete members locally
+                    if let Ok(members) = storage.list_members(&desc.id) {
+                        for m in members {
+                            let _ = storage.remove_member(&desc.id, &m.entity_id);
+                        }
+                    }
+                    tracing::info!(
+                        group_id = %desc.id,
+                        "net: group deletion tombstone received from peer"
+                    );
+                    tombstoned.push(desc.id.clone());
+                } else {
+                    tracing::debug!(
+                        group_id = %desc.id,
+                        signed = desc.signature.is_some(),
+                        "net: merged group descriptor from peer"
+                    );
+                    upserted.push(desc.id.clone());
+                }
             }
             Err(e) => {
                 tracing::warn!(
@@ -202,7 +226,10 @@ fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> 
             }
         }
     }
-    upserted
+    MergeResult {
+        upserted,
+        tombstoned,
+    }
 }
 
 /// Verify an Ed25519 signature on a group descriptor.
@@ -674,7 +701,7 @@ pub async fn run_swarm_loop(
                                 }
                             }
                         }
-                        let _merged = handle_behaviour_event(
+                        let merge_result = handle_behaviour_event(
                             ev,
                             &mut swarm,
                             &event_tx,
@@ -691,6 +718,19 @@ pub async fn run_swarm_loop(
                         // tracking (cultures, signatures) but do NOT enter shared_groups.
                         // Only groups created via our API or provisioned at startup belong
                         // in shared_groups. Relay nodes use relay_learned_groups instead.
+
+                        // Tombstoned groups: remove from shared_groups (stops replication)
+                        if !merge_result.tombstoned.is_empty() {
+                            let mut groups = shared_groups.write().await;
+                            for gid in &merge_result.tombstoned {
+                                groups.retain(|g| g != gid);
+                            }
+                            tracing::info!(
+                                tombstoned = ?merge_result.tombstoned,
+                                remaining = groups.len(),
+                                "net: removed tombstoned groups from shared_groups"
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -739,8 +779,9 @@ fn handle_behaviour_event(
     >,
     node_identity: &Arc<NodeIdentity>,
     our_entity_id: &str,
-) -> Vec<String> {
+) -> MergeResult {
     let mut merged_groups = Vec::new();
+    let mut tombstoned_groups = Vec::new();
     match event {
         // -- Ping --
         CordeliaBehaviourEvent::Ping(libp2p::ping::Event {
@@ -928,16 +969,17 @@ fn handle_behaviour_event(
 
             // Merge incoming descriptors from peer (R4-030)
             if let Some(ref descs) = request.descriptors {
-                let new_groups = merge_descriptors(storage.as_ref(), descs);
-                if !new_groups.is_empty() {
+                let result = merge_descriptors(storage.as_ref(), descs);
+                if !result.upserted.is_empty() {
                     tracing::info!(
                         %peer,
-                        merged = new_groups.len(),
-                        groups = ?new_groups,
+                        merged = result.upserted.len(),
+                        groups = ?result.upserted,
                         "net: merged group descriptors from peer request"
                     );
-                    merged_groups.extend(new_groups);
+                    merged_groups.extend(result.upserted);
                 }
+                tombstoned_groups.extend(result.tombstoned);
             }
 
             let resp = GroupExchangeResponse {
@@ -959,15 +1001,16 @@ fn handle_behaviour_event(
         }) => {
             // Merge incoming descriptors from peer response (R4-030)
             if let Some(ref descs) = response.descriptors {
-                let new_groups = merge_descriptors(storage.as_ref(), descs);
-                if !new_groups.is_empty() {
+                let result = merge_descriptors(storage.as_ref(), descs);
+                if !result.upserted.is_empty() {
                     tracing::info!(
-                        merged = new_groups.len(),
-                        groups = ?new_groups,
+                        merged = result.upserted.len(),
+                        groups = ?result.upserted,
                         "net: merged group descriptors from peer response"
                     );
-                    merged_groups.extend(new_groups);
+                    merged_groups.extend(result.upserted);
                 }
+                tombstoned_groups.extend(result.tombstoned);
             }
 
             if let Some(tx) = pending_group_exchange.remove(&request_id) {
@@ -1012,7 +1055,10 @@ fn handle_behaviour_event(
         // Catch-all for remaining events (ping failures, identify push, etc.)
         _ => {}
     }
-    merged_groups
+    MergeResult {
+        upserted: merged_groups,
+        tombstoned: tombstoned_groups,
+    }
 }
 
 // ============================================================================
