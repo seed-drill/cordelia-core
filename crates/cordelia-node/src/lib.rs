@@ -115,8 +115,13 @@ impl cordelia_storage::Storage for StorageClone {
     fn delete_group(&self, id: &str) -> cordelia_storage::Result<bool> {
         self.0.delete_group(id)
     }
-    fn purge_deleted_groups(&self, tombstone_culture: &str, retention_days: u32) -> cordelia_storage::Result<u32> {
-        self.0.purge_deleted_groups(tombstone_culture, retention_days)
+    fn purge_deleted_groups(
+        &self,
+        tombstone_culture: &str,
+        retention_days: u32,
+    ) -> cordelia_storage::Result<u32> {
+        self.0
+            .purge_deleted_groups(tombstone_culture, retention_days)
     }
     fn log_access(&self, entry: &cordelia_storage::AccessLogEntry) -> cordelia_storage::Result<()> {
         self.0.log_access(entry)

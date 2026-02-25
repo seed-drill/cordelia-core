@@ -1196,10 +1196,7 @@ mod tests {
         assert_eq!(l1, b"{}");
 
         // Membership works
-        let eve = storage
-            .get_membership("grp-lazy", "eve")
-            .unwrap()
-            .unwrap();
+        let eve = storage.get_membership("grp-lazy", "eve").unwrap().unwrap();
         assert_eq!(eve.role, "member");
 
         // Existing L1 data is NOT overwritten

@@ -721,8 +721,7 @@ async fn groups_read(
 
     match state.storage.read_group(&req.group_id) {
         Ok(Some(group))
-            if group.culture
-                == cordelia_protocol::messages::GROUP_TOMBSTONE_CULTURE =>
+            if group.culture == cordelia_protocol::messages::GROUP_TOMBSTONE_CULTURE =>
         {
             (StatusCode::NOT_FOUND, "group not found").into_response()
         }
@@ -773,9 +772,7 @@ async fn groups_delete(
     match state.storage.read_group(&req.group_id) {
         Ok(Some(_)) => {}
         Ok(None) => return (StatusCode::NOT_FOUND, "group not found").into_response(),
-        Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 
     // Write tombstone descriptor (culture = __deleted__) instead of deleting.
@@ -791,11 +788,16 @@ async fn groups_delete(
     // Soft-remove members (CoW: posture = 'removed', no hard delete)
     if let Ok(members) = state.storage.list_members(&req.group_id) {
         for m in members {
-            let _ = state.storage.update_member_posture(&req.group_id, &m.entity_id, "removed");
+            let _ = state
+                .storage
+                .update_member_posture(&req.group_id, &m.entity_id, "removed");
         }
     }
 
-    tracing::info!(group_id = req.group_id, "mem: group tombstoned for deletion");
+    tracing::info!(
+        group_id = req.group_id,
+        "mem: group tombstoned for deletion"
+    );
 
     // Remove from shared dynamic groups (stops item replication)
     if let Some(shared) = &state.shared_groups {
