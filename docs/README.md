@@ -54,7 +54,7 @@ User journeys and walkthroughs. Audience: users, portal developers.
 
 | Document | Description |
 |----------|-------------|
-| Group Lifecycle | Create, invite, bootstrap, use, leave -- **planned** ([#8](https://github.com/seed-drill/cordelia-core/issues/8)) |
+| [Group Lifecycle](guides/group-lifecycle.md) | Create, invite, bootstrap, use, leave, delete -- end-to-end journey ([#8](https://github.com/seed-drill/cordelia-core/issues/8)) |
 
 ## Testing
 
