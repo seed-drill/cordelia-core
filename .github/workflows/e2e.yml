@@ -40,6 +40,16 @@ jobs:
         run: |
           docker exec -e REPORT=1 cordelia-e2e-orchestrator bash /tests/ci-smoke-test.sh
 
+      - name: Capture node logs on failure
+        if: failure()
+        run: |
+          mkdir -p reports/logs
+          for node in boot1 boot2 edge-alpha-1 edge-bravo-1 keeper-alpha-1 keeper-bravo-1 agent-alpha-1; do
+            echo "--- ${node} (last 100 lines) ---"
+            docker logs "cordelia-e2e-${node}" --tail 100 2>&1 | tee "reports/logs/${node}.log" || true
+            echo ""
+          done
+
       - name: Collect reports
         if: always()
         run: |

@@ -36,7 +36,29 @@ api() {
 }
 
 pass() { echo "  PASS: $1"; PASSED=$((PASSED + 1)); }
-fail() { echo "  FAIL: $1"; FAILED=$((FAILED + 1)); }
+fail() { echo "  FAIL: $1"; FAILED=$((FAILED + 1)); capture_diagnostics "$@"; }
+
+# Capture diagnostics from relevant nodes on failure.
+# Nodes passed as $2... (first arg is the message consumed by fail).
+# Diagnostics appended to DIAG_LOG for inclusion in JSON report.
+DIAG_LOG=""
+
+capture_diagnostics() {
+    local msg="$1"; shift
+    # Default to all nodes if none specified
+    local nodes="${*:-$ALL_NODES}"
+    echo "  --- Diagnostics (${msg}) ---"
+    for node in $nodes; do
+        echo "  [$node] /diagnostics:"
+        local diag
+        diag=$(api "$node" "diagnostics" 2>/dev/null || echo '{"error":"unreachable"}')
+        echo "$diag" | jq -c '{peers_hot: .peers_hot, peers_warm: .peers_warm, sync_errors: .sync_errors, items_synced: .items_synced, items_pushed: .items_pushed, items_rejected: .items_rejected}' 2>/dev/null || echo "  $diag"
+        echo ""
+    done
+    echo "  --- End diagnostics ---"
+    # Append to diagnostics log for JSON report
+    DIAG_LOG="${DIAG_LOG}${DIAG_LOG:+\n}[${msg}] nodes=${nodes}"
+}
 
 wait_for_item() {
     local host="$1" item_id="$2" timeout="${3:-$TIMEOUT}"
@@ -116,7 +138,7 @@ if wait_for_item "keeper-bravo-1" "$XORG_ITEM" "$TIMEOUT"; then
     record "cross-org-replication" "PASS" "$T1_LAT"
 else
     T1_LAT=$(( $(date +%s) - T1_START ))
-    fail "shared-xorg item did NOT reach bravo after ${TIMEOUT}s"
+    fail "shared-xorg item did NOT reach bravo after ${TIMEOUT}s" agent-alpha-1 keeper-bravo-1 edge-alpha-1 edge-bravo-1
     record "cross-org-replication" "FAIL" "$T1_LAT"
 fi
 echo ""
@@ -136,7 +158,7 @@ if wait_for_item "keeper-alpha-1" "$REV_ITEM" "$TIMEOUT"; then
     record "reverse-replication" "PASS" "$T2_LAT"
 else
     T2_LAT=$(( $(date +%s) - T2_START ))
-    fail "reverse item did NOT reach alpha after ${TIMEOUT}s"
+    fail "reverse item did NOT reach alpha after ${TIMEOUT}s" keeper-bravo-1 keeper-alpha-1 edge-bravo-1 edge-alpha-1
     record "reverse-replication" "FAIL" "$T2_LAT"
 fi
 echo ""
@@ -154,7 +176,7 @@ api "agent-alpha-1" "l2/write" \
 if wait_for_item "keeper-alpha-1" "$ISO_ITEM" "$TIMEOUT"; then
     pass "alpha-internal item reached alpha keeper"
 else
-    fail "alpha-internal item did NOT reach alpha keeper"
+    fail "alpha-internal item did NOT reach alpha keeper" agent-alpha-1 keeper-alpha-1 edge-alpha-1
 fi
 
 # Verify it does NOT reach bravo
@@ -165,7 +187,7 @@ if assert_no_item "keeper-bravo-1" "$ISO_ITEM"; then
     record "group-isolation" "PASS" "$T3_LAT"
 else
     T3_LAT=$(( $(date +%s) - T3_START ))
-    fail "alpha-internal item LEAKED to bravo"
+    fail "alpha-internal item LEAKED to bravo" keeper-bravo-1 edge-bravo-1 edge-alpha-1
     record "group-isolation" "FAIL" "$T3_LAT"
 fi
 echo ""
@@ -185,7 +207,7 @@ T4_OK=true
 # 4a: Create group on agent-alpha-1
 if ! api "agent-alpha-1" "groups/create" \
     "{\"group_id\":\"${GRP_ID}\",\"name\":\"CI Test Group\",\"culture\":\"chatty\",\"security_policy\":\"standard\"}" > /dev/null 2>&1; then
-    fail "groups/create failed on agent-alpha-1"
+    fail "groups/create failed on agent-alpha-1" agent-alpha-1
     T4_OK=false
 else
     pass "groups/create succeeded"
@@ -199,7 +221,7 @@ if $T4_OK; then
 
     if ! api "agent-alpha-1" "groups/add_member" \
         "{\"group_id\":\"${GRP_ID}\",\"entity_id\":\"${MEMBER_ID}\",\"role\":\"member\"}" > /dev/null 2>&1; then
-        fail "groups/add_member failed on agent-alpha-1"
+        fail "groups/add_member failed on agent-alpha-1" agent-alpha-1
         T4_OK=false
     else
         pass "groups/add_member succeeded"
@@ -212,7 +234,7 @@ if $T4_OK; then
     if echo "$local_read" | jq -e ".members[] | select(.entity_id == \"${MEMBER_ID}\")" > /dev/null 2>&1; then
         pass "member visible in local groups/read"
     else
-        fail "member NOT visible in local groups/read"
+        fail "member NOT visible in local groups/read" agent-alpha-1
         T4_OK=false
     fi
 fi
@@ -259,7 +281,7 @@ for node in $ALL_NODES; do
     status=$(api "$node" "status" || echo '{}')
     hot=$(echo "$status" | jq -r '.peers_hot // 0' 2>/dev/null || echo 0)
     if [ "$hot" -lt 1 ]; then
-        fail "$node has 0 hot peers"
+        fail "$node has 0 hot peers" "$node"
         HEALTH_OK=false
     fi
 done
@@ -272,7 +294,7 @@ for node in $ALL_NODES; do
 done
 
 if [ "$TOTAL_ERRORS" -gt 0 ]; then
-    fail "${TOTAL_ERRORS} total sync errors across cluster"
+    fail "${TOTAL_ERRORS} total sync errors across cluster" $ALL_NODES
     HEALTH_OK=false
 fi
 
@@ -290,6 +312,28 @@ echo ""
 echo "==========================================="
 echo "  RESULTS: ${PASSED} passed, ${FAILED} failed"
 echo "==========================================="
+
+# --- Full cluster diagnostics on failure ------------------------------------
+
+DIAG_JSON="null"
+if [ "$FAILED" -gt 0 ]; then
+    echo ""
+    echo "=== Full Cluster Diagnostics (${FAILED} failures) ==="
+    DIAG_JSON="{"
+    first=true
+    for node in $ALL_NODES; do
+        diag=$(api "$node" "diagnostics" 2>/dev/null || echo '{"error":"unreachable"}')
+        echo "--- $node ---"
+        echo "$diag" | jq . 2>/dev/null || echo "$diag"
+        echo ""
+        if $first; then first=false; else DIAG_JSON+=","; fi
+        # Escape for JSON embedding
+        diag_escaped=$(echo "$diag" | jq -c . 2>/dev/null || echo '"unreachable"')
+        DIAG_JSON+="\"${node}\":${diag_escaped}"
+    done
+    DIAG_JSON+="}"
+    echo "=== End Cluster Diagnostics ==="
+fi
 
 # --- JSON Report ------------------------------------------------------------
 
@@ -315,7 +359,8 @@ if [ "${REPORT:-0}" = "1" ]; then
   "environment": "docker-ci",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "node_count": ${TOTAL},
-  "tests": ${TESTS_JSON}
+  "tests": ${TESTS_JSON},
+  "diagnostics": ${DIAG_JSON}
 }
 EOF
 
