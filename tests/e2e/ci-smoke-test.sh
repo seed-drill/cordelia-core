@@ -218,24 +218,25 @@ if $T4_OK; then
 fi
 
 # 4d: Check if group descriptor propagated to keeper-alpha-1 via GroupExchange
-# GroupExchange runs every ~60s per hop; this is informational only (not a hard failure)
-# because propagation timing depends on peer discovery and exchange scheduling.
+# Propagation path: agent-alpha-1 -> edge-alpha-1 -> keeper-alpha-1 (2 hops, ~60s each).
+# Informational only -- timing depends on peer discovery and exchange scheduling.
 if $T4_OK; then
-    GX_TIMEOUT=30
+    GX_TIMEOUT=150
     deadline=$((SECONDS + GX_TIMEOUT))
     GX_FOUND=false
     while [ $SECONDS -lt $deadline ]; do
-        grp_list=$(api "keeper-alpha-1" "groups/list" '{}' 2>/dev/null || echo "[]")
-        if echo "$grp_list" | jq -e ".[] | select(.id == \"${GRP_ID}\")" > /dev/null 2>&1; then
+        grp_list=$(api "keeper-alpha-1" "groups/list" '{}' 2>/dev/null || echo '{"groups":[]}')
+        if echo "$grp_list" | jq -e ".groups[] | select(.id == \"${GRP_ID}\")" > /dev/null 2>&1; then
             GX_FOUND=true
             break
         fi
         sleep 5
     done
     if $GX_FOUND; then
-        pass "group descriptor propagated to keeper-alpha-1"
+        GX_LAT=$(( $(date +%s) - T4_START ))
+        pass "group descriptor propagated to keeper-alpha-1 (${GX_LAT}s)"
     else
-        echo "  INFO: group descriptor not yet on keeper-alpha-1 after ${GX_TIMEOUT}s (expected -- GroupExchange is async)"
+        echo "  INFO: group descriptor not yet on keeper-alpha-1 after ${GX_TIMEOUT}s (2-hop GroupExchange is async)"
     fi
 fi
 
