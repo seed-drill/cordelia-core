@@ -91,7 +91,7 @@ cargo fmt --check                # Format check
 
 ## Related Repo
 
-The MCP proxy (TypeScript) lives in [cordelia-proxy](https://github.com/seed-drill/cordelia-proxy). HLD.md describes the proxy-node interaction boundary.
+The MCP proxy (TypeScript) lives in [cordelia-proxy](https://github.com/seed-drill/cordelia-proxy). [docs/architecture/hld.md](docs/architecture/hld.md) describes the proxy-node interaction boundary.
 
 ## MANDATORY: Safety Principles
 

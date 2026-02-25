@@ -866,7 +866,7 @@ Generates vectors        →      Stores vectors (unencrypted*)
 
 *Vectors unencrypted by default (bounded leakage: topic inferable,
 content not). Groups can opt into HE-CKKS for zero-leakage search
-at ~100x compute cost. See ARCHITECTURE.md "Decentralised Search".
+at ~100x compute cost. See [overview.md](overview.md) "Decentralised Search".
 
 ### Storage by Node Role
 
@@ -1121,7 +1121,7 @@ See WP2 (Section 4) for full spec.
 
 ### Phase 2: Operational Infrastructure (R3+)
 - **Enrollment CLI**: `npx @cordelia/proxy enroll`
-  RFC 8628 device authorization grant. See enrollment-sequence.md.
+  RFC 8628 device authorization grant. See [enrollment](../operations/enrollment.md).
 - **Token management**: Issue, rotate, revoke bearer tokens.
   Stored in `~/.cordelia/tokens/`.
 - **Key distribution**: Envelope encryption key exchange when entities

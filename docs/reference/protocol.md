@@ -370,7 +370,7 @@ Three defence layers, each independently effective, compounding in combination:
 
 **Layer 2: Novelty filtering.** Inbound memories pass through the novelty engine. Low-entropy content (repetitive, generic, boilerplate) is rejected before persistence. An attacker must produce content that appears genuinely novel *in the context of the receiving entity's existing knowledge*. This is information-theoretically expensive: the cost of producing content that passes a novelty filter is bounded below by the entropy of the target's context. An outsider attacking a group they don't understand faces maximum entropy -- every message is maximally expensive to craft convincingly.
 
-**Layer 3: Trust calibration.** Memories that don't match reality lose trust over time (see ARCHITECTURE.md trust model). Even if an attacker produces novel content, inaccurate memories are detected empirically and the source loses trust. Sustained attack requires producing content that is novel AND accurate AND relevant -- which converges on genuinely useful contribution.
+**Layer 3: Trust calibration.** Memories that don't match reality lose trust over time (see [Architecture Overview](../architecture/overview.md) trust model). Even if an attacker produces novel content, inaccurate memories are detected empirically and the source loses trust. Sustained attack requires producing content that is novel AND accurate AND relevant -- which converges on genuinely useful contribution.
 
 **Comparison to existing consensus mechanisms:**
 
@@ -419,4 +419,4 @@ All crates implemented. 52+ tests passing. End-to-end replication verified live.
 
 ## Output
 
-This spec becomes `cordelia-node/SPEC.md`. Martin implements against it. Spec changes need discussion.
+This spec lives at `docs/reference/protocol.md`. Martin implements against it. Spec changes need discussion.

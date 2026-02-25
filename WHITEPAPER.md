@@ -739,7 +739,7 @@ The system does not attempt to:
   entity's device (endpoint security is out of scope)
 - Guarantee availability against network-level denial of service
 
-See THREAT-MODEL.md for the full adversary model and REQUIREMENTS.md
+See [Threat Model](docs/architecture/threat-model.md) for the full adversary model and [Requirements](docs/reference/requirements.md)
 for testable security requirements.
 
 ---
@@ -1112,13 +1112,13 @@ companion documents:
 | Document | Purpose | Audience |
 |----------|---------|----------|
 | **WHITEPAPER.md** | This document. Why the system exists and how it works. | Everyone |
-| **REQUIREMENTS.md** | 109 testable requirements (24 P0 invariants). What the system must do. | Engineers, testers, auditors |
-| **HLD.md** | Component map, API contracts, work packages. How it is built. | Engineers building it |
-| **THREAT-MODEL.md** | Adversary model, attack surfaces, mitigations. What can go wrong. | Security reviewers |
-| **ARCHITECTURE.md** | Target state architecture, deployment models, federation. Where it is going. | Architects, investors |
-| **NETWORK-MODEL.md** | Wire protocol detail, message formats, state machines. | Protocol implementors |
-| **SPEC.md** | Formal protocol specification. | Protocol implementors |
-| **docs/design/** | Deep dives: game theory, group model, decentralisation pivot. | Researchers |
+| **[Requirements](docs/reference/requirements.md)** | 109 testable requirements (24 P0 invariants). What the system must do. | Engineers, testers, auditors |
+| **[HLD](docs/architecture/hld.md)** | Component map, API contracts, work packages. How it is built. | Engineers building it |
+| **[Threat Model](docs/architecture/threat-model.md)** | Adversary model, attack surfaces, mitigations. What can go wrong. | Security reviewers |
+| **[Architecture](docs/architecture/overview.md)** | Target state architecture, deployment models, federation. Where it is going. | Architects, investors |
+| **[Network Model](docs/architecture/network-model.md)** | Wire protocol detail, message formats, state machines. | Protocol implementors |
+| **[Protocol Spec](docs/reference/protocol.md)** | Formal protocol specification. | Protocol implementors |
+| **[docs/design/](docs/design/)** | Deep dives: game theory, group model, decentralisation pivot. | Researchers |
 
 ---
 

@@ -850,7 +850,7 @@ their trust decisions (local, not consensus), and culture parameters are inspect
 
 **Critical requirement**: Sybil resistance. Entity sovereignty provides the foundation
 (one entity = one vote), but identity verification becomes load-bearing at federation
-scale (R3+). Memory accuracy-based trust calibration (Rule 7 in ARCHITECTURE.md) may
+scale (R3+). Memory accuracy-based trust calibration (Rule 7 in [Architecture Overview](../architecture/overview.md)) may
 serve as a novel Sybil resistance mechanism: your reputation is your memory accuracy
 over time, which cannot be faked without actual knowledge.
 

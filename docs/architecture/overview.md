@@ -2,9 +2,8 @@
 
 *Target state: R2/R3 horizon*
 
-> Visual diagram: [docs/architecture-diagram.drawio](docs/architecture-diagram.drawio)
+> Visual diagram: [../architecture-diagram.drawio](../architecture-diagram.drawio)
 > (open in [diagrams.net](https://app.diagrams.net)).
-> See also [docs/architecture-overview.md](docs/architecture-overview.md) for a concise summary.
 
 ## System Architecture
 

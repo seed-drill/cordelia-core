@@ -28,7 +28,7 @@ This is not where you install Cordelia or find hooks/skills. For that, see **[co
 Claude Code --> @cordelia/proxy (TS, stdio) --> cordelia-node (Rust, HTTP :9473) --> peers (QUIC :9474)
 ```
 
-The proxy speaks MCP over stdio to agents and HTTP to the local Rust node. The node handles storage, replication, and peer management. See [ARCHITECTURE.md](ARCHITECTURE.md) and [HLD.md](HLD.md) for full design.
+The proxy speaks MCP over stdio to agents and HTTP to the local Rust node. The node handles storage, replication, and peer management. See the [architecture overview](docs/architecture/overview.md) and [HLD](docs/architecture/hld.md) for full design.
 
 ## Crates
 
@@ -52,13 +52,12 @@ cargo clippy -- -D warnings
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) -- Full system architecture
-- [HLD.md](HLD.md) -- High-level design (proxy + node interaction)
-- [REQUIREMENTS.md](REQUIREMENTS.md) -- Formal requirements specification
-- [SPEC.md](SPEC.md) -- Protocol specification
-- [NETWORK-MODEL.md](NETWORK-MODEL.md) -- Network model and topology
-- [DEPLOY.md](DEPLOY.md) -- Deployment guide
-- [THREAT-MODEL.md](THREAT-MODEL.md) -- Security threat model
+See [docs/README.md](docs/README.md) for the full documentation index, organised by audience:
+
+- **Architecture**: [Overview](docs/architecture/overview.md), [HLD](docs/architecture/hld.md), [Network Model](docs/architecture/network-model.md), [Threat Model](docs/architecture/threat-model.md)
+- **Design Decisions**: [Group Model](docs/design/R2-006-group-model.md), [Replication Routing](docs/design/replication-routing.md), [more...](docs/README.md#design-decisions----why-we-decided-this)
+- **Reference**: [Protocol Spec](docs/reference/protocol.md), [Requirements](docs/reference/requirements.md)
+- **Operations**: [Deployment](docs/operations/deploy.md), [Enrollment](docs/operations/enrollment.md)
 
 ## Related Repos
 

@@ -2,7 +2,7 @@
 
 **Version**: 2.0
 **Status**: Version 1.0
-**Derived from**: Architecture diagram (arch-diag.drawio), HLD.md (v2), ARCHITECTURE.md, schema_v4.sql
+**Derived from**: Architecture diagram (arch-diag.drawio), [HLD](../architecture/hld.md) (v2), [Architecture Overview](../architecture/overview.md), schema_v4.sql
 **Audience**: Development team (Martin, Russell), CI/CD pipeline, future auditors
 
 ---
