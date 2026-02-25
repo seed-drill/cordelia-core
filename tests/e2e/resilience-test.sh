@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "${SCRIPT_DIR}/lib/wait.sh"
 
 BEARER_TOKEN="${BEARER_TOKEN:-test-token-fixed}"
-TIMEOUT=60
+TIMEOUT=120
 TS=$(date +%s)
 PASSED=0
 FAILED=0
@@ -61,7 +61,7 @@ diag() {
     echo "  --- Diagnostics ---"
     for node in $nodes; do
         echo "  [$node]:"
-        zapi "$node" "diagnostics" | jq -c '{peers_hot: .peers_hot, peers_warm: .peers_warm, sync_errors: .sync_errors, items_synced: .items_synced}' 2>/dev/null || echo "  unreachable"
+        zapi "$node" "diagnostics" | jq -c '{peers: .peers, sync_errors: .replication.sync_errors, items_synced: .replication.items_synced}' 2>/dev/null || echo "  unreachable"
     done
     echo "  ---"
 }
@@ -197,17 +197,35 @@ else
     echo "  Disconnecting edge-alpha-1 from backbone..."
     docker network disconnect "$BACKBONE" cordelia-e2e-edge-alpha-1
 
-    # 2c: Write on alpha side (T2)
-    sleep 1
+    # 2c: Write on alpha side (T1)
+    sleep 2
     echo "  Writing alpha-side update during partition..."
     zapi "agent-alpha-1" "l2/write" \
         "{\"item_id\":\"${LWW_ITEM}\",\"type\":\"learning\",\"data\":{\"version\":\"v2-alpha-stale\"},\"meta\":{\"group_id\":\"shared-xorg\",\"author_id\":\"agent-alpha-1\"}}" > /dev/null
 
-    # 2d: Write on bravo side (T3 > T2, should win)
-    sleep 2
+    # 2d: Write on bravo side (T2 > T1, should win)
+    # Generous gap ensures T2 > T1 even with Docker exec latency
+    sleep 5
     echo "  Writing bravo-side update during partition (later timestamp, should win)..."
-    zapi "keeper-bravo-1" "l2/write" \
-        "{\"item_id\":\"${LWW_ITEM}\",\"type\":\"learning\",\"data\":{\"version\":\"v3-bravo-wins\"},\"meta\":{\"group_id\":\"shared-xorg\",\"author_id\":\"keeper-bravo-1\"}}" > /dev/null
+    bravo_write_result=$(zapi "keeper-bravo-1" "l2/write" \
+        "{\"item_id\":\"${LWW_ITEM}\",\"type\":\"learning\",\"data\":{\"version\":\"v3-bravo-wins\"},\"meta\":{\"group_id\":\"shared-xorg\",\"author_id\":\"keeper-bravo-1\"}}" 2>&1)
+    if [ -z "$bravo_write_result" ] || echo "$bravo_write_result" | grep -q '"error"'; then
+        fail "bravo write of v3 failed: ${bravo_write_result}"
+        diag keeper-bravo-1 edge-bravo-1
+        record "split-brain-lww" "FAIL" "$(( $(date +%s) - T2_START ))"
+        echo ""
+    else
+
+    # Verify bravo stored v3 locally before reconnecting
+    sleep 1
+    bravo_check=$(zapi "keeper-bravo-1" "l2/read" "{\"item_id\":\"${LWW_ITEM}\"}" || echo "{}")
+    bravo_ver=$(echo "$bravo_check" | jq -r '.data.version // empty' 2>/dev/null || echo "")
+    if [ "$bravo_ver" != "v3-bravo-wins" ]; then
+        fail "bravo did not store v3 locally (has '${bravo_ver}')"
+        diag keeper-bravo-1
+        record "split-brain-lww" "FAIL" "$(( $(date +%s) - T2_START ))"
+        echo ""
+    else
 
     # 2e: Reconnect
     echo "  Reconnecting edge-alpha-1 to backbone..."
@@ -215,7 +233,7 @@ else
 
     # 2f: Wait for convergence, then check both sides have bravo's version
     echo "  Waiting for LWW convergence..."
-    sleep 30  # allow anti-entropy to run
+    sleep 45  # allow anti-entropy + multi-hop propagation
 
     LWW_OK=true
 
@@ -261,6 +279,9 @@ else
     else
         record "split-brain-lww" "FAIL" "$T2_LAT"
     fi
+
+    fi  # bravo stored v3 locally
+    fi  # bravo write succeeded
 fi
 echo ""
 

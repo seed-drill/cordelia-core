@@ -52,7 +52,7 @@ capture_diagnostics() {
         echo "  [$node] /diagnostics:"
         local diag
         diag=$(api "$node" "diagnostics" 2>/dev/null || echo '{"error":"unreachable"}')
-        echo "$diag" | jq -c '{peers_hot: .peers_hot, peers_warm: .peers_warm, sync_errors: .sync_errors, items_synced: .items_synced, items_pushed: .items_pushed, items_rejected: .items_rejected}' 2>/dev/null || echo "  $diag"
+        echo "$diag" | jq -c '{peers: .peers, sync_errors: .replication.sync_errors, items_synced: .replication.items_synced, items_pushed: .replication.items_pushed, items_rejected: .replication.items_rejected}' 2>/dev/null || echo "  $diag"
         echo ""
     done
     echo "  --- End diagnostics ---"
@@ -289,7 +289,7 @@ done
 # Check sync errors
 TOTAL_ERRORS=0
 for node in $ALL_NODES; do
-    errors=$(api "$node" "diagnostics" | jq '.sync_errors // 0' 2>/dev/null || echo 0)
+    errors=$(api "$node" "diagnostics" | jq '.replication.sync_errors // 0' 2>/dev/null || echo 0)
     TOTAL_ERRORS=$((TOTAL_ERRORS + errors))
 done
 

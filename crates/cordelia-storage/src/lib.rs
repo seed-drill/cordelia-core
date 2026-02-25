@@ -70,6 +70,9 @@ pub struct L2ItemWrite {
     pub key_version: i32,
     pub parent_id: Option<String>,
     pub is_copy: bool,
+    /// When set, preserves the original writer's timestamp (for replicated items).
+    /// When None, uses `datetime('now')` (for local writes).
+    pub updated_at: Option<String>,
 }
 
 /// Lightweight header for sync protocol.
@@ -448,7 +451,7 @@ impl Storage for SqliteStorage {
         conn.execute(
             "INSERT INTO l2_items (id, type, owner_id, visibility, data, checksum,
                                    group_id, author_id, key_version, parent_id, is_copy, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now'))
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, COALESCE(?12, datetime('now')))
              ON CONFLICT(id) DO UPDATE SET
                type = excluded.type,
                owner_id = excluded.owner_id,
@@ -460,7 +463,7 @@ impl Storage for SqliteStorage {
                key_version = excluded.key_version,
                parent_id = excluded.parent_id,
                is_copy = excluded.is_copy,
-               updated_at = datetime('now')",
+               updated_at = excluded.updated_at",
             params![
                 item.id,
                 item.item_type,
@@ -473,6 +476,7 @@ impl Storage for SqliteStorage {
                 item.key_version,
                 item.parent_id,
                 if item.is_copy { 1 } else { 0 },
+                item.updated_at,
             ],
         )?;
         Ok(())
@@ -1008,6 +1012,7 @@ mod tests {
             key_version: 1,
             parent_id: None,
             is_copy: false,
+            updated_at: None,
         };
 
         storage.write_l2_item(&item).unwrap();
@@ -1075,6 +1080,7 @@ mod tests {
             key_version: 1,
             parent_id: None,
             is_copy: false,
+            updated_at: None,
         };
 
         storage.write_l2_item(&item).unwrap();
@@ -1271,6 +1277,7 @@ mod tests {
                     key_version: 1,
                     parent_id: None,
                     is_copy: false,
+                    updated_at: None,
                 })
                 .unwrap();
         }
@@ -1288,6 +1295,7 @@ mod tests {
                 key_version: 1,
                 parent_id: None,
                 is_copy: false,
+                updated_at: None,
             })
             .unwrap();
 
@@ -1312,6 +1320,7 @@ mod tests {
             key_version: 1,
             parent_id: None,
             is_copy: false,
+            updated_at: None,
         };
 
         storage.write_l2_item(&item).unwrap();

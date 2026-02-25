@@ -529,6 +529,7 @@ async fn l2_write(
         key_version: meta.key_version.unwrap_or(1),
         parent_id: meta.parent_id,
         is_copy: meta.is_copy.unwrap_or(false),
+        updated_at: None, // local write: use datetime('now')
     };
 
     match state.storage.write_l2_item(&write) {

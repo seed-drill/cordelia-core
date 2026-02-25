@@ -115,6 +115,7 @@ These are architectural invariants. Do not violate them without explicit team ap
 ### Replication Semantics
 
 - **LWW (Last-Writer-Wins)** by `updated_at` for both items and group descriptors
+- **Timestamp preservation**: replicated items MUST preserve the original writer's `updated_at` via `L2ItemWrite.updated_at = Some(source_ts)`. Only local writes use `None` (→ `datetime('now')`). Without this, intermediate/relay nodes reset timestamps at each hop, allowing stale items to appear newer after partition recovery.
 - **Three-gate routing**: (1) peer is target, (2) peer has group, (3) local node has group
 - **Culture-driven broadcast**: chatty = eager push, taciturn = anti-entropy only
 - **Checksums are mandatory** -- reject items/descriptors that fail checksum verification

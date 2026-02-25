@@ -156,7 +156,11 @@ impl ReplicationEngine {
             }
         }
 
-        // 6. Store the item (encrypted blob, no decryption)
+        // 6. Store the item (encrypted blob, no decryption).
+        // Preserve the original writer's updated_at to maintain causal ordering
+        // across hops -- without this, intermediate nodes would reset the timestamp
+        // to datetime('now'), allowing stale items to appear newer after traversing
+        // relay nodes post-partition.
         let write = L2ItemWrite {
             id: item.item_id.clone(),
             item_type: item.item_type.clone(),
@@ -168,6 +172,7 @@ impl ReplicationEngine {
             key_version: item.key_version as i32,
             parent_id: item.parent_id.clone(),
             is_copy: item.is_copy,
+            updated_at: Some(item.updated_at.clone()),
         };
 
         if let Err(e) = storage.write_l2_item(&write) {
@@ -594,6 +599,75 @@ mod tests {
         };
         let result = engine.on_receive(&db, &tombstone, &["seed-drill".into()], None);
         assert_eq!(result, ReceiveOutcome::Duplicate); // Already gone
+    }
+
+    #[test]
+    fn test_on_receive_lww_preserves_original_timestamp() {
+        // Regression test: write_l2_item must preserve the source's updated_at
+        // rather than using datetime('now'). Without this, stale items traversing
+        // relay nodes post-partition acquire fresh timestamps and overwrite newer
+        // versions on the destination.
+        let engine = default_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let db = cordelia_storage::SqliteStorage::create_new(&dir.path().join("test.db")).unwrap();
+        let groups = vec!["g1".to_string()];
+
+        // Simulate bravo writing v3 at T2 (newer)
+        let v3_data = b"v3-bravo-wins";
+        let v3 = FetchedItem {
+            item_id: "lww-item".into(),
+            item_type: "learning".into(),
+            encrypted_blob: v3_data.to_vec(),
+            checksum: checksum(v3_data),
+            author_id: "bravo".into(),
+            group_id: "g1".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-01T00:00:02Z".into(), // T2
+        };
+        assert_eq!(
+            engine.on_receive(&db, &v3, &groups, None),
+            ReceiveOutcome::Stored
+        );
+
+        // Verify the stored item has the original updated_at, not datetime('now')
+        let stored = db.read_l2_item("lww-item").unwrap().unwrap();
+        assert_eq!(
+            stored.updated_at, "2026-02-01T00:00:02Z",
+            "must preserve source timestamp"
+        );
+
+        // Simulate stale v2 arriving from a relay with a LATER updated_at than v3's
+        // source timestamp, but this should NOT happen anymore because the relay
+        // preserves the original timestamp. The stale item's original timestamp (T1)
+        // is earlier than v3's (T2), so LWW should reject it.
+        let v2_data = b"v2-alpha-stale";
+        let v2 = FetchedItem {
+            item_id: "lww-item".into(),
+            item_type: "learning".into(),
+            encrypted_blob: v2_data.to_vec(),
+            checksum: checksum(v2_data),
+            author_id: "alpha".into(),
+            group_id: "g1".into(),
+            key_version: 1,
+            parent_id: None,
+            is_copy: false,
+            updated_at: "2026-02-01T00:00:01Z".into(), // T1 < T2
+        };
+        assert_eq!(
+            engine.on_receive(&db, &v2, &groups, None),
+            ReceiveOutcome::Duplicate
+        );
+
+        // v3 should still be the stored version
+        let final_item = db.read_l2_item("lww-item").unwrap().unwrap();
+        assert_eq!(
+            final_item.data,
+            v3_data.to_vec(),
+            "newer version must survive"
+        );
+        assert_eq!(final_item.updated_at, "2026-02-01T00:00:02Z");
     }
 
     #[test]
