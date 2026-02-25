@@ -694,7 +694,8 @@ impl Storage for SqliteStorage {
             "INSERT INTO group_members (group_id, entity_id, role, posture, joined_at)
              VALUES (?1, ?2, ?3, 'active', datetime('now'))
              ON CONFLICT(group_id, entity_id) DO UPDATE SET
-               role = excluded.role",
+               role = excluded.role,
+               posture = 'active'",
             params![group_id, entity_id, role],
         )?;
         Ok(())
@@ -1165,10 +1166,17 @@ mod tests {
         let alice2 = storage.get_membership("grp-m", "alice").unwrap().unwrap();
         assert_eq!(alice2.role, "admin");
 
-        // Remove
+        // Remove (soft-delete: posture = 'removed')
         assert!(storage.remove_member("grp-m", "bob").unwrap());
         assert!(!storage.remove_member("grp-m", "bob").unwrap()); // already removed
         assert_eq!(storage.list_members("grp-m").unwrap().len(), 1);
+
+        // Re-invite: add_member reactivates removed member
+        storage.add_member("grp-m", "bob", "member").unwrap();
+        let bob = storage.get_membership("grp-m", "bob").unwrap().unwrap();
+        assert_eq!(bob.role, "member");
+        assert_eq!(bob.posture.as_deref(), Some("active"));
+        assert_eq!(storage.list_members("grp-m").unwrap().len(), 2);
     }
 
     #[test]

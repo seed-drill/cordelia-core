@@ -268,43 +268,66 @@ No vector clocks, no CRDTs. LWW is sufficient because:
 
 ## 5. Leave / Remove Members
 
-### 5.1 Current behaviour (soft removal)
+### 5.1 Soft removal (R4)
 
 ```
 POST /api/v1/groups/remove_member
 { "group_id": "team-alpha", "entity_id": "alice" }
 ```
 
-This removes the member from the local `group_members` table. Effects:
+Sets the member's `posture` to `"removed"` (CoW soft-delete). The member row is retained in storage but filtered from `list_members` and `get_membership` responses. Effects:
 
 - Removed on this node only (membership is local, R4-030)
 - Portal must call `remove_member` on all nodes independently
-- Items already replicated to the removed member's node persist
-- The removed member's node still has the group in `shared_groups` (must also call `groups/delete` on their node)
+- Items already replicated to the removed member's node persist (encrypted blobs)
+- The removed member's node still has the group in `shared_groups` -- portal must also call `groups/delete` on their node to stop replication
 
 ### 5.2 What does NOT happen
 
-- Items authored by the removed member are NOT tombstoned
-- No notification to other members
-- No key rotation (encryption key unchanged)
+- Items authored by the removed member are NOT tombstoned (they remain in the group)
+- No notification to other members (membership is local-only)
+- No key rotation (encryption key unchanged -- removed member can still decrypt historical items)
 - No automatic cleanup of the removed member's data on other nodes
 
-### 5.3 Future: hard removal (R5)
+### 5.3 Threat model for soft removal
 
-When the R5 personal groups PSK model is implemented:
-1. Remove member from all nodes (portal-driven)
-2. Rotate group encryption key (`key_version` increment)
-3. Re-encrypt future items with new key
-4. Removed member cannot decrypt items written after rotation
-5. Historical items remain readable with old key (key ring pattern)
+A removed member retains:
+- Encrypted copies of all items replicated before removal
+- The current group encryption key (can decrypt historical items)
+- Knowledge of group ID, member IDs, and item metadata
 
-See [#15](https://github.com/seed-drill/cordelia-core/issues/15) for the full member removal design discussion.
+A removed member cannot:
+- Receive new items (replication stops after `shared_groups` removal)
+- Forge items (checksum verification + group membership gates)
+- Re-join without portal re-invitation
+
+This is acceptable for R4 because item content is encrypted at the proxy layer -- the removed member's node holds opaque ciphertext. The real risk is key compromise, which requires R5 key rotation to mitigate.
+
+### 5.4 Future: hard removal (R5)
+
+When the R5 personal groups PSK model is implemented, `departure_policy` in group culture governs the response:
+
+| Policy | On removal | Key rotation | Items |
+|--------|-----------|-------------|-------|
+| `permissive` | Clean exit, member retains authored copies | No | Unchanged |
+| `standard` | Member loses access, authored items stay | Yes (future items only) | Unchanged |
+| `restrictive` | Member loses access, immediate re-key | Yes (all items re-encrypted) | Re-encrypted |
+
+Hard removal flow (standard/restrictive):
+1. Portal removes member from all nodes
+2. Rotate group PSK (`key_version` increment)
+3. New PSK distributed to remaining members via vault
+4. Future items encrypted with new key version
+5. Removed member cannot decrypt post-rotation items
+6. Historical items remain readable via key ring (old PSK retained)
+
+See [member removal design](../design/member-removal.md) for the full threat model and R5 plan.
 
 ---
 
-## 6. Delete
+## 6. Delete (Tombstone Propagation)
 
-### 6.1 Current behaviour (local only)
+### 6.1 Tombstone deletion
 
 ```
 POST /api/v1/groups/delete
@@ -312,27 +335,29 @@ POST /api/v1/groups/delete
 ```
 
 Effects:
-1. Group removed from local `groups` table (cascades to `group_members`)
-2. Group removed from `shared_groups` (replication stops)
-3. L2 items with `group_id = "team-alpha"` are NOT deleted (orphaned)
-4. Other nodes still have the group descriptor and items
+1. Group culture overwritten with `"__deleted__"` sentinel (tombstone descriptor)
+2. Members soft-removed (`posture = "removed"`)
+3. Group removed from `shared_groups` (replication stops)
+4. Tombstone descriptor propagates to peers via GroupExchange (LWW semantics)
+5. L2 items with `group_id = "team-alpha"` are NOT deleted
 
-### 6.2 No propagation
+### 6.2 Propagation via GroupExchange
 
-Group deletion does not propagate via GroupExchange. Other nodes:
-- Still list the group in `groups/list`
-- Still have the descriptor in storage
-- Stop receiving new items (the deleting node stops pushing)
-- May continue syncing items between themselves
+The tombstone descriptor propagates automatically:
 
-### 6.3 Full cleanup (portal-driven)
+1. Originating node writes tombstone culture
+2. Next GroupExchange round sends tombstone to connected peers
+3. Receiving peers detect `is_tombstone()`, soft-remove local members, remove from `shared_groups`
+4. Peers propagate the tombstone further on their next GroupExchange round
+5. Full network propagation: ~60s per hop (GroupExchange interval)
 
-To fully remove a group across the network:
-1. Portal calls `groups/delete` on every node that has the group
-2. Each node removes locally
-3. Items are left in storage (no tombstone mechanism for groups)
+### 6.3 Garbage collection
 
-See [#14](https://github.com/seed-drill/cordelia-core/issues/14) for a proposal to add tombstone descriptors for group deletion propagation.
+Tombstoned groups are retained in storage for `TOMBSTONE_RETENTION_DAYS` (default 7) to ensure propagation reaches all peers. A daily GC tick in the replication task purges tombstoned groups past retention -- this is the only path to physical row deletion (CoW invariant).
+
+### 6.4 Items after group deletion
+
+L2 items remain in storage after group deletion. They are orphaned (no group to replicate through) but not deleted. This preserves the CoW invariant and allows recovery if the deletion was accidental (within the retention window, re-creating the group with the same ID would resume replication).
 
 ---
 

@@ -335,7 +335,7 @@ List item headers for a group (used by the sync protocol).
 
 ### POST /api/v1/groups/delete
 
-Delete a group from this node. Cascades to group_members.
+Tombstone a group. Writes a deletion marker (`culture = "__deleted__"`) that propagates to peers via GroupExchange. Members are soft-removed (`posture = "removed"`). The group row is retained as a tombstone until GC purges it after the retention window (default 7 days).
 
 **Request:**
 ```json
@@ -349,7 +349,7 @@ Delete a group from this node. Cascades to group_members.
 
 **Errors:** `404` if group not found.
 
-**Side effects:** Group removed from `shared_groups` (stops replication). L2 items with this group_id are NOT deleted. Deletion does NOT propagate to peers (see [#14](https://github.com/seed-drill/cordelia-core/issues/14)).
+**Side effects:** Group removed from `shared_groups` (stops replication). Tombstone descriptor propagates via GroupExchange -- receiving peers auto-remove members and stop replicating. L2 items with this group_id are NOT deleted. Daily GC purges tombstoned groups past retention.
 
 ### POST /api/v1/groups/add_member
 
@@ -378,7 +378,7 @@ Add a member to a group on this node.
 
 ### POST /api/v1/groups/remove_member
 
-Remove a member from a group on this node.
+Soft-remove a member from a group on this node. Sets `posture = "removed"` (CoW -- no hard delete). The member row is retained but filtered from `list_members` and `get_membership` responses.
 
 **Request:**
 ```json
@@ -393,7 +393,9 @@ Remove a member from a group on this node.
 { "ok": true }
 ```
 
-**Errors:** `404` if member not found.
+**Errors:** `404` if member not found (or already removed).
+
+**Notes:** Local-only -- does not propagate to other nodes. Portal must call on all nodes independently. No key rotation or item cleanup (see [member removal design](../design/member-removal.md)).
 
 ### POST /api/v1/groups/update_posture
 

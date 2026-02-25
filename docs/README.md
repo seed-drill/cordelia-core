@@ -27,6 +27,7 @@ Append-only decision records. Audience: contributors.
 | [Game Theory](design/game-theory.md) | Bayesian trust, cooperation equilibrium, adversarial analysis |
 | [Memory Architecture](design/memory-architecture.md) | Three-domain model (values/procedural/interrupt), schema-free wire protocol |
 | [Replication Routing](design/replication-routing.md) | Three-gate routing model, relay behaviour, deployment patterns, timing |
+| [Member Removal](design/member-removal.md) | Soft removal (R4), threat model, hard removal with key rotation (R5) |
 
 ## Reference -- "Look it up"
 
