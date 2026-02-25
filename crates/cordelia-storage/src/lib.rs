@@ -345,6 +345,18 @@ impl SqliteStorage {
             tracing::info!("storage: migrated schema v5 -> v6 (group descriptor signing)");
         }
 
+        // Re-read version after v5->v6 migration
+        let version: u32 =
+            conn.query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+                row.get(0)
+            })?;
+
+        // Migrate v6 -> v7: add 'removed' posture for CoW soft-delete
+        if version == 6 {
+            conn.execute_batch(include_str!("schema_v7.sql"))?;
+            tracing::info!("storage: migrated schema v6 -> v7 (CoW member soft-delete)");
+        }
+
         Ok(())
     }
 
@@ -632,7 +644,7 @@ impl Storage for SqliteStorage {
         let conn = self.db()?;
         let mut stmt = conn.prepare(
             "SELECT group_id, entity_id, role, posture, joined_at
-             FROM group_members WHERE group_id = ?1 ORDER BY entity_id",
+             FROM group_members WHERE group_id = ?1 AND posture != 'removed' ORDER BY entity_id",
         )?;
         let rows = stmt
             .query_map(params![group_id], |row| {
@@ -653,7 +665,7 @@ impl Storage for SqliteStorage {
         let result = conn
             .query_row(
                 "SELECT group_id, entity_id, role, posture, joined_at
-                 FROM group_members WHERE group_id = ?1 AND entity_id = ?2",
+                 FROM group_members WHERE group_id = ?1 AND entity_id = ?2 AND posture != 'removed'",
                 params![group_id, entity_id],
                 |row| {
                     Ok(GroupMemberRow {
@@ -690,8 +702,10 @@ impl Storage for SqliteStorage {
 
     fn remove_member(&self, group_id: &str, entity_id: &str) -> Result<bool> {
         let conn = self.db()?;
+        // CoW: soft-delete via posture, not hard DELETE. GC handles physical removal.
         let changes = conn.execute(
-            "DELETE FROM group_members WHERE group_id = ?1 AND entity_id = ?2",
+            "UPDATE group_members SET posture = 'removed'
+             WHERE group_id = ?1 AND entity_id = ?2 AND posture != 'removed'",
             params![group_id, entity_id],
         )?;
         Ok(changes > 0)
@@ -721,7 +735,8 @@ impl Storage for SqliteStorage {
 
     fn purge_deleted_groups(&self, tombstone_culture: &str, retention_days: u32) -> Result<u32> {
         let conn = self.db()?;
-        // Delete members first, then groups with tombstone culture older than retention
+        // GC: hard-delete tombstoned groups past retention window.
+        // This is the only path to physical deletion (CoW invariant).
         let cutoff = format!("-{retention_days} days");
         conn.execute(
             "DELETE FROM group_members WHERE group_id IN (

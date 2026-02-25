@@ -788,10 +788,10 @@ async fn groups_delete(
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
 
-    // Delete members locally
+    // Soft-remove members (CoW: posture = 'removed', no hard delete)
     if let Ok(members) = state.storage.list_members(&req.group_id) {
         for m in members {
-            let _ = state.storage.remove_member(&req.group_id, &m.entity_id);
+            let _ = state.storage.update_member_posture(&req.group_id, &m.entity_id, "removed");
         }
     }
 

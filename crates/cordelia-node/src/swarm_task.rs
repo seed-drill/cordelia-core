@@ -198,10 +198,10 @@ fn merge_descriptors(storage: &dyn Storage, descriptors: &[GroupDescriptor]) -> 
                 }
 
                 if desc.is_tombstone() {
-                    // Tombstone: delete members locally
+                    // Tombstone: soft-remove members (CoW: posture = 'removed')
                     if let Ok(members) = storage.list_members(&desc.id) {
                         for m in members {
-                            let _ = storage.remove_member(&desc.id, &m.entity_id);
+                            let _ = storage.update_member_posture(&desc.id, &m.entity_id, "removed");
                         }
                     }
                     tracing::info!(

@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS group_members (
   role TEXT NOT NULL DEFAULT 'member'
     CHECK(role IN ('owner', 'admin', 'member', 'viewer')),
   posture TEXT DEFAULT 'active'
-    CHECK(posture IN ('active', 'silent', 'emcon')),
+    CHECK(posture IN ('active', 'silent', 'emcon', 'removed')),
   joined_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (group_id, entity_id),
   FOREIGN KEY (group_id) REFERENCES groups(id),

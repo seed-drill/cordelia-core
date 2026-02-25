@@ -98,3 +98,38 @@ The MCP proxy (TypeScript) lives in [cordelia-proxy](https://github.com/seed-dri
 1. **Memory is sacred** -- storage changes require extreme care, always have rollback path
 2. **Fail safe** -- preserve existing data on failure, never overwrite good data with bad
 3. **Test isolation** -- tests must never touch production data paths
+
+## MANDATORY: P2P Network Design Rules
+
+These are architectural invariants. Do not violate them without explicit team approval.
+
+### Copy-on-Write (CoW)
+
+- **No hard deletes** -- all deletions use tombstone markers (soft-delete), never `DELETE FROM`
+- Items: `is_tombstone=true` on the L2 item row (existing pattern in replication engine)
+- Groups: `culture = "__deleted__"` sentinel on the group descriptor row
+- Members: `posture = "removed"` on the group_members row (never delete the row)
+- **GC is the only path to physical deletion**, and only after the retention window (`TOMBSTONE_RETENTION_DAYS`, default 7). GC runs daily in the replication task.
+- **CoW on share**: sharing personal memory creates a copy (`is_copy=true`, `parent_id` links to original). Original is never modified.
+
+### Replication Semantics
+
+- **LWW (Last-Writer-Wins)** by `updated_at` for both items and group descriptors
+- **Three-gate routing**: (1) peer is target, (2) peer has group, (3) local node has group
+- **Culture-driven broadcast**: chatty = eager push, taciturn = anti-entropy only
+- **Checksums are mandatory** -- reject items/descriptors that fail checksum verification
+- **Signatures on group descriptors** -- Ed25519, verified on merge
+
+### Separation of Concerns
+
+- **P2P layer**: descriptor propagation, item replication, anti-entropy sync
+- **Portal layer**: identity, membership, invitation, OAuth
+- **Proxy layer**: encryption, search, MCP interface, key management
+- **Members are local-only** (R4-030) -- membership does not replicate via GroupExchange. Only group descriptors (culture, signature) propagate between peers.
+
+### Metadata Visibility
+
+- Item content is encrypted (AES-256-GCM at proxy layer) -- nodes and relays see only blobs
+- Metadata is plaintext on the wire: `group_id`, `author_id`, `item_type`, `updated_at`, `checksum`
+- This is a known and accepted trade-off ("manifest is not cargo")
+- A compromised relay can observe traffic patterns but cannot read content or forge items
