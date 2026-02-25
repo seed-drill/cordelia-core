@@ -227,6 +227,9 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
     let (write_tx, write_rx) =
         tokio::sync::broadcast::channel::<cordelia_api::WriteNotification>(256);
 
+    // Bootstrap sync channel (API groups/create -> replication task)
+    let (bootstrap_tx, bootstrap_rx) = tokio::sync::mpsc::channel::<String>(32);
+
     // Replication diagnostics counters (shared between replication task and API)
     let repl_stats = Arc::new(cordelia_api::ReplicationStats::new());
 
@@ -313,6 +316,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
             Box::pin(async move { pool.peer_details().await })
         })),
         replication_stats: Some(repl_stats.clone()),
+        bootstrap_sync: Some(bootstrap_tx),
     });
 
     // Build governor with role-based targets and dial policy
@@ -454,6 +458,7 @@ async fn run_node(cfg: config::NodeConfig) -> anyhow::Result<()> {
                 is_relay,
                 relay_learned,
                 relay_blocked,
+                bootstrap_rx,
             )
             .await;
         })

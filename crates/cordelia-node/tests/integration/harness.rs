@@ -411,6 +411,7 @@ impl TestNodeBuilder {
                 Box::pin(async move { pool.peer_details().await })
             })),
             replication_stats: Some(repl_stats.clone()),
+            bootstrap_sync: None,
         });
 
         // Governor
@@ -530,6 +531,7 @@ impl TestNodeBuilder {
             let stats = repl_stats.clone();
             let relay_learned = relay_learned_groups.clone();
             let relay_blocked = relay_blocked.clone();
+            let (_, bootstrap_rx) = tokio::sync::mpsc::channel::<String>(32);
             handles.push(tokio::spawn(async move {
                 replication_task::run_replication_loop(
                     repl_engine,
@@ -543,6 +545,7 @@ impl TestNodeBuilder {
                     is_relay,
                     relay_learned,
                     relay_blocked,
+                    bootstrap_rx,
                 )
                 .await;
             }));

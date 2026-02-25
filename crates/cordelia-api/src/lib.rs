@@ -115,6 +115,8 @@ pub struct AppState {
     pub peer_count_fn: Option<PeerCountFn>,
     pub peer_list_fn: Option<PeerListFn>,
     pub replication_stats: Option<Arc<ReplicationStats>>,
+    /// Signal to trigger immediate anti-entropy sync for a newly added group.
+    pub bootstrap_sync: Option<tokio::sync::mpsc::Sender<String>>,
 }
 
 /// Build the axum router.
@@ -673,6 +675,10 @@ async fn groups_create(
                         "mem: group added to shared_groups"
                     );
                 }
+            }
+            // Trigger immediate anti-entropy sync for the new group
+            if let Some(tx) = &state.bootstrap_sync {
+                let _ = tx.try_send(req.group_id.clone());
             }
             Json(serde_json::json!({
                 "ok": true,

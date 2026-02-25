@@ -48,6 +48,7 @@ pub async fn run_replication_loop(
     is_relay: bool,
     relay_learned_groups: Option<Arc<RwLock<HashSet<String>>>>,
     relay_blocked_groups: Arc<HashSet<String>>,
+    mut bootstrap_rx: mpsc::Receiver<String>,
 ) {
     // Base tick for per-culture sync scheduling (fastest culture interval = 60s for chatty)
     let mut sync_base_tick = tokio::time::interval(std::time::Duration::from_secs(
@@ -385,6 +386,52 @@ pub async fn run_replication_loop(
                                 "repl: anti-entropy sync failed"
                             );
                         }
+                    }
+                }
+            }
+
+            // Fast bootstrap: immediate full sync for a newly-added group
+            Some(group_id) = bootstrap_rx.recv() => {
+                tracing::info!(group = group_id.as_str(), "repl: bootstrap sync triggered");
+
+                // Reset tracking state so this is a full sync from scratch
+                next_sync_at.remove(&group_id);
+                last_sync_at.remove(&group_id);
+                sync_cycle_count.remove(&group_id);
+
+                let current_groups = shared_groups.read().await.clone();
+                let relay_accept_set: Option<HashSet<String>> = if is_relay {
+                    Some(current_groups.iter().cloned().collect())
+                } else {
+                    None
+                };
+
+                match run_anti_entropy(
+                    &engine,
+                    &pool,
+                    &storage,
+                    &group_id,
+                    &current_groups,
+                    &cmd_tx,
+                    None, // full sync
+                    &stats,
+                    is_relay,
+                    relay_accept_set.as_ref(),
+                ).await {
+                    Ok(latest_ts) => {
+                        stats.sync_rounds.fetch_add(1, Ordering::Relaxed);
+                        if let Some(ts) = latest_ts {
+                            last_sync_at.insert(group_id.clone(), ts);
+                        }
+                        tracing::info!(group = group_id.as_str(), "repl: bootstrap sync complete");
+                    }
+                    Err(e) => {
+                        stats.sync_errors.fetch_add(1, Ordering::Relaxed);
+                        tracing::warn!(
+                            group = group_id.as_str(),
+                            error = %e,
+                            "repl: bootstrap sync failed (will retry on next anti-entropy cycle)"
+                        );
                     }
                 }
             }
