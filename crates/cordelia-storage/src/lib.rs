@@ -669,6 +669,13 @@ impl Storage for SqliteStorage {
 
     fn add_member(&self, group_id: &str, entity_id: &str, role: &str) -> Result<()> {
         let conn = self.db()?;
+        // Ensure L1 stub exists (FK: group_members.entity_id -> l1_hot.user_id).
+        // Uses INSERT OR IGNORE so existing L1 data is never overwritten.
+        conn.execute(
+            "INSERT OR IGNORE INTO l1_hot (user_id, data, updated_at, created_at)
+             VALUES (?1, ?2, datetime('now'), datetime('now'))",
+            params![entity_id, b"{}".as_slice()],
+        )?;
         conn.execute(
             "INSERT INTO group_members (group_id, entity_id, role, posture, joined_at)
              VALUES (?1, ?2, ?3, 'active', datetime('now'))
@@ -1126,6 +1133,36 @@ mod tests {
         assert!(storage.remove_member("grp-m", "bob").unwrap());
         assert!(!storage.remove_member("grp-m", "bob").unwrap()); // already removed
         assert_eq!(storage.list_members("grp-m").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_add_member_auto_creates_l1_stub() {
+        let (_dir, storage) = test_db();
+
+        storage
+            .write_group("grp-lazy", "Lazy FK Test", "{}", "{}")
+            .unwrap();
+
+        // No L1 entry for "eve" -- add_member should auto-create stub
+        assert!(storage.read_l1("eve").unwrap().is_none());
+        storage.add_member("grp-lazy", "eve", "member").unwrap();
+
+        // L1 stub was created
+        let l1 = storage.read_l1("eve").unwrap().unwrap();
+        assert_eq!(l1, b"{}");
+
+        // Membership works
+        let eve = storage
+            .get_membership("grp-lazy", "eve")
+            .unwrap()
+            .unwrap();
+        assert_eq!(eve.role, "member");
+
+        // Existing L1 data is NOT overwritten
+        storage.write_l1("frank", b"{\"name\":\"Frank\"}").unwrap();
+        storage.add_member("grp-lazy", "frank", "admin").unwrap();
+        let frank_l1 = storage.read_l1("frank").unwrap().unwrap();
+        assert_eq!(frank_l1, b"{\"name\":\"Frank\"}");
     }
 
     #[test]

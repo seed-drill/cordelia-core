@@ -373,9 +373,8 @@ Add a member to a group on this node.
 
 **Errors:**
 - `400` if role is invalid
-- `500` if FK constraint fails (entity must have L1 entry -- call `l1/write` first)
 
-**Notes:** Upsert pattern -- calling again with a different role updates the existing membership. Local-only: does not propagate to other nodes.
+**Notes:** Upsert pattern -- calling again with a different role updates the existing membership. Local-only: does not propagate to other nodes. If the entity has no L1 entry, a minimal stub (`{}`) is auto-created to satisfy the FK constraint.
 
 ### POST /api/v1/groups/remove_member
 

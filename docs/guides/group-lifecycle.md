@@ -90,19 +90,16 @@ Portal                          Node A              Node B
 
 The portal calls `groups/create` and `groups/add_member` on every node that should participate. This is explicit provisioning -- no magic.
 
-### 2.2 FK constraint
+### 2.2 L1 auto-stub
 
-`group_members.entity_id` has a foreign key to `l1_hot.user_id`. Before adding a member, the entity must have an L1 entry on that node:
+`group_members.entity_id` has a foreign key to `l1_hot.user_id`. When `add_member` is called, a minimal L1 stub (`{}`) is auto-created if the entity doesn't already have an L1 entry. Existing L1 data is never overwritten.
 
 ```
-POST /api/v1/l1/write
-{ "user_id": "alice", "data": {"type": "stub"} }
-
 POST /api/v1/groups/add_member
 { "group_id": "team-alpha", "entity_id": "alice", "role": "member" }
 ```
 
-See [#13](https://github.com/seed-drill/cordelia-core/issues/13) for discussion on relaxing this constraint.
+The portal can optionally call `l1/write` beforehand to provision richer identity data, but it's not required.
 
 ### 2.3 Roles and postures
 
