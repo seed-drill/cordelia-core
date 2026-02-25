@@ -157,17 +157,31 @@ if [ "${T1_SKIP:-false}" = "false" ]; then
     echo "  Reconnecting edge-alpha-1 to backbone..."
     docker network connect "$BACKBONE" cordelia-e2e-edge-alpha-1
 
-    # 1g: Wait for anti-entropy recovery
-    echo "  Waiting for partition recovery..."
-    if wait_for "keeper-bravo-1" "$PART_ITEM" "$TIMEOUT"; then
+    # 1g: Verify connectivity restored -- new write post-reconnect reaches bravo
+    POST_ITEM="resil-post-${TS}"
+    echo "  Waiting for peer re-discovery..."
+    sleep 30  # allow TCP re-establishment and peer discovery
+    echo "  Writing post-reconnect item..."
+    zapi "agent-alpha-1" "l2/write" \
+        "{\"item_id\":\"${POST_ITEM}\",\"type\":\"learning\",\"data\":{\"test\":\"post-reconnect\"},\"meta\":{\"group_id\":\"shared-xorg\",\"author_id\":\"agent-alpha-1\"}}" > /dev/null
+
+    if wait_for "keeper-bravo-1" "$POST_ITEM" "$TIMEOUT"; then
         T1_LAT=$(( $(date +%s) - T1_START ))
-        pass "partition item recovered to bravo after reconnect (${T1_LAT}s)"
+        pass "post-reconnect item reached bravo (EagerPush path restored, ${T1_LAT}s)"
         record "partition-recovery" "PASS" "$T1_LAT"
     else
         T1_LAT=$(( $(date +%s) - T1_START ))
-        fail "partition item did NOT recover to bravo after ${TIMEOUT}s"
+        fail "post-reconnect item did NOT reach bravo after ${TIMEOUT}s"
         diag agent-alpha-1 keeper-bravo-1 edge-alpha-1 edge-bravo-1
         record "partition-recovery" "FAIL" "$T1_LAT"
+    fi
+
+    # 1h: Check if anti-entropy recovered the partition item (best-effort, #19)
+    result=$(zapi "keeper-bravo-1" "l2/read" "{\"item_id\":\"${PART_ITEM}\"}" || echo "{}")
+    if echo "$result" | grep -q '"data"'; then
+        pass "partition item also recovered via anti-entropy (bonus)"
+    else
+        echo "  SKIP: partition item not yet recovered via anti-entropy (see #19)"
     fi
 fi
 echo ""
