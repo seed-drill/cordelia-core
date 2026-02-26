@@ -34,12 +34,14 @@ All sections except `[node]` are optional and default to sensible values.
 | `entity_id` | String | `default` | Entity identity for this node. Used as `author_id` for items. |
 | `role` | String | `personal` | Node role: `personal`, `relay`, or `keeper`. See [Roles](#roles). |
 | `groups` | String[] | `[]` | Initial group IDs. Seeded into storage and `shared_groups` on first boot. |
+| `personal_group` | String? | _(none)_ | Opaque UUID v4 for the entity's personal group (R5). Auto-provisioned at enrolment. |
 
 **Notes:**
 - `api_socket` and `api_addr` are mutually exclusive based on `api_transport`.
 - Paths support `~/` tilde expansion (resolved to `$HOME`).
 - `entity_id` should be unique per human/agent. Multiple nodes can share the same `entity_id` (same person, different devices).
 - `groups` is for static provisioning. Groups can also be added dynamically via the `groups/create` API at runtime.
+- `personal_group` is the UUID of the entity's personal group (see R5-personal-groups.md). When set, the node seeds this group on first boot alongside `groups`. The UUID is opaque by design -- it has no derivable relationship to `entity_id`, preventing relay nodes from correlating personal group traffic to entity identity. The UUID is generated at enrolment and stored in the vault alongside the group PSK.
 
 ---
 
@@ -221,6 +223,7 @@ entity_id = "russell"
 api_transport = "http"
 api_addr = "127.0.0.1:9473"
 database = "~/cordelia/memory/cordelia.db"
+personal_group = "b7f3a1c2-9d4e-4f8b-a6c1-3e5d7f9b2a4c"
 groups = ["team-alpha", "shared-xorg"]
 
 [[network.bootnodes]]
@@ -229,6 +232,9 @@ addr = "boot1.cordelia.seeddrill.ai:9474"
 [[network.bootnodes]]
 addr = "boot2.cordelia.seeddrill.ai:9474"
 ```
+
+The `personal_group` UUID is generated at enrolment and stored in the vault.
+It is added to `shared_groups` on boot alongside the explicit `groups` list.
 
 ### Boot node (backbone relay)
 

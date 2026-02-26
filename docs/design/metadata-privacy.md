@@ -50,7 +50,7 @@ This analysis inventories what a compromised relay can observe, what it can infe
 |-------|---------|---------|-------------|
 | `peer_id` | `12D3KooW...` | libp2p identity | Medium -- stable node identifier |
 | `addrs` | `/ip4/10.0.1.5/tcp/9472` | Network addresses | High -- reveals IP/location |
-| `groups` | `["team-alpha","personal-russell"]` | Group membership list | High -- full group roster per node |
+| `groups` | `["team-alpha","b7f3a1c2-..."]` | Group membership list | High -- full group roster per node (personal groups use opaque UUIDs per R5 Section 3.2) |
 | `role` | `relay`, `personal`, `keeper` | Node classification | Medium -- reveals topology |
 | `last_seen` | `1740000000` | Activity timestamp | Low |
 
@@ -73,7 +73,15 @@ This analysis inventories what a compromised relay can observe, what it can infe
 2. Hashing `author_id` would prevent access logging with readable identifiers
 3. The practical benefit is limited -- a relay that knows any group member can correlate hashed IDs via observation
 
-This is an accepted deviation. If pseudonymous IDs become a requirement, they should be addressed at the protocol level (see Section 5.3).
+This is an accepted deviation for shared groups. For **personal groups**, the
+privacy risk is partially mitigated by R5's opaque UUID scheme: personal group
+IDs are random UUIDs with no derivable relationship to the entity ID. A relay
+observing `group_id = "b7f3a1c2-..."` cannot determine which entity owns the
+group without prior knowledge. This eliminates the most sensitive case
+(correlating an individual's private memories across relay hops) while
+accepting the residual risk for shared groups where membership is inherently
+collective. If pseudonymous IDs become a requirement for shared groups, they
+should be addressed at the protocol level (see Section 5.3).
 
 ---
 
@@ -177,6 +185,9 @@ Replace plaintext `author_id` and `group_id` with per-peer pseudonyms. Each peer
 - **Cost:** Key exchange complexity. Relay routing must be redesigned.
 - **Complexity:** Significant protocol change. Breaks three-gate routing model.
 - **Recommended for:** R6+ if threat model escalates to include adversarial infrastructure
+- **Note (R5):** Personal groups now use opaque UUIDs, achieving a subset of this
+  benefit (entity-to-group decorrelation) without the protocol redesign. Full
+  pseudonymous identifiers for shared groups remain a future option.
 
 ### 5.4 Onion routing (high cost, high benefit)
 

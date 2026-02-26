@@ -159,8 +159,8 @@ This drives `group_intersection` computation and, for dynamic relays, the
 
 Dynamic relays advertise their learned groups so that peers (keepers, other
 relays) can compute correct `group_intersection`. Without this, a keeper
-with group `personal-alice` would not know that an edge relay also handles
-that group, and anti-entropy sync would never target the relay.
+with a personal group (e.g. `b7f3a1c2-...`) would not know that an edge relay
+also handles that group, and anti-entropy sync would never target the relay.
 
 ### 5.2 Why Relays Must Advertise Learned Groups
 
@@ -324,7 +324,11 @@ agent-alpha-1  →  edge-alpha  →  keeper-alpha-1
 
 ### 7.3 Pattern C: Personal Group
 
-**Example**: `personal-agent-alpha-1` -- entity's private memory.
+**Example**: `b7f3a1c2-9d4e-4f8b-a6c1-3e5d7f9b2a4c` -- entity's private memory.
+
+Personal group IDs are **opaque UUIDs** (v4), generated at enrolment. The
+group_id transmitted over the network reveals nothing about the entity's
+identity (see `metadata-privacy.md` Section 2.5 and R5 Section 3.2).
 
 ```
 agent-alpha-1  →  edge-alpha  →  keeper-alpha-1
@@ -334,15 +338,19 @@ agent-alpha-1  →  edge-alpha  →  keeper-alpha-1
 ```
 
 **Provisioning**:
-- Group created on agent and keeper nodes during enrollment
+- UUID generated at enrolment, stored in entity's config and vault
+- Group created on agent and keeper nodes during enrolment
 - Edge learns via group exchange (no explicit provisioning)
 - Keepers MUST have the group created (Gate 3 requires `our_groups` membership)
+- Relay nodes see only the opaque UUID, not the entity identity
 
-**Culture**: Chatty (personal memory should replicate immediately)
+**Culture**: Taciturn (personal memory syncs at anti-entropy interval, not
+eagerly pushed on every write -- see R5 Section 3.3)
 
 **Isolation**: Items reach only the org's edge and keeper nodes. They do NOT
 cross to other orgs because other orgs' edges don't learn the personal group
-(no peer in the other org has it).
+(no peer in the other org has it). The opaque UUID adds a privacy layer:
+even within the org, relay nodes cannot determine which entity owns the group.
 
 ### 7.4 Provisioning Summary
 

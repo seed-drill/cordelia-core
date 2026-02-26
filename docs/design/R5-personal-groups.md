@@ -1,8 +1,8 @@
 # R5: Personal Groups -- Unified Storage and Replication Model
 
-**Status**: Draft
-**Author**: Russell Wing, Claude (Opus 4.5)
-**Date**: 2026-02-04
+**Status**: Draft (updated 2026-02-26)
+**Author**: Russell Wing, Claude (Opus 4.5/4.6)
+**Date**: 2026-02-04 (revised 2026-02-26)
 **Depends on**: R2-006 (Group Model, DONE), R4-030 (Group Metadata Replication, DONE), R3-028 (Dynamic shared_groups, DONE)
 **Supersedes**: The private/group storage split introduced in R2
 
@@ -53,7 +53,7 @@ control is in the permissions, not in whether the file exists in the filesystem.
 Every entity has exactly one personal group, auto-created at enrolment:
 
 ```
-Personal group: personal-{entity_id}
+Personal group: <opaque-uuid-v4>
   Owner: {entity_id}
   Members: {entity_id} (owner), keeper-1 (member), keeper-2 (member), ...
   Culture: { "broadcast_eagerness": "taciturn" }
@@ -67,12 +67,33 @@ that keepers do not possess -- they store opaque ciphertext.
 
 ### 3.2 Group ID
 
-Personal group IDs are deterministic: `personal-{entity_id}`.
+Personal group IDs are **opaque UUIDs** (v4), generated at enrolment time.
 
-This is a deliberate departure from the whitepaper's content-addressed group
-ID scheme (`SHA-256(URI)`) for personal groups only. The deterministic ID
-allows any component to compute the personal group ID from an entity ID
-without a lookup. Shared groups continue to use the existing ID scheme.
+```
+Personal group ID: e.g. "b7f3a1c2-9d4e-4f8b-a6c1-3e5d7f9b2a4c"
+```
+
+This is a deliberate privacy decision. Using a deterministic scheme like
+`personal-{entity_id}` would leak entity identity to every relay node that
+handles the group's traffic, since `group_id` is transmitted in plaintext
+metadata for routing purposes (see `metadata-privacy.md` Section 2.5).
+
+An opaque UUID means:
+
+- Relay nodes see an anonymous group ID with no correlation to any entity
+- The only nodes that know the mapping from UUID to entity are the entity's
+  own devices and the portal (via vault metadata)
+- Network observers cannot determine which groups belong to which entities
+- No component can compute the personal group ID from an entity ID without
+  a lookup -- this is the intended trade-off for privacy
+
+The personal group UUID is stored in:
+
+1. **Entity's config** (`~/.cordelia/config.toml`): `personal_group` field
+2. **Vault metadata**: alongside the PSK, encrypted with passphrase
+3. **Portal database**: linked to entity record for portal access
+
+Shared groups continue to use the existing content-addressed ID scheme.
 
 ### 3.3 Culture
 
@@ -128,6 +149,7 @@ alongside:
 ```
 Vault contents:
   - node_encryption_key: the existing key (legacy, pre-R5)
+  - personal_group_id: the opaque UUID (for portal/device lookup)
   - personal_group_psk: the personal group's AES-256 key
   - [future] key_ring: array of versioned keys for rotation
 ```
@@ -149,7 +171,7 @@ From a keeper's perspective, personal group items are indistinguishable from
 any other group's items:
 
 - Keeper receives encrypted blob via anti-entropy sync
-- Keeper stores blob in its `l2_items` table with `group_id = personal-{entity_id}`
+- Keeper stores blob in its `l2_items` table with `group_id = <opaque-uuid>`
 - Keeper participates in GroupExchange, advertising the personal group descriptor
 - Keeper cannot decrypt (no PSK)
 - Keeper can serve the encrypted blob to any peer that requests it
@@ -217,12 +239,14 @@ User logs into portal (OAuth)
 
 Device enrolment (RFC 8628 device code flow) adds:
 
-1. Generate personal group PSK (if first device)
-2. Create personal group (`personal-{entity_id}`)
-3. Add entity as owner
-4. Add portal-keeper as member
-5. Store PSK in vault (encrypted with passphrase)
-6. Push personal group descriptor to device's node
+1. Generate personal group UUID v4 (if first device)
+2. Generate personal group PSK (if first device)
+3. Create personal group with opaque UUID
+4. Add entity as owner
+5. Add portal-keeper as member
+6. Store UUID + PSK in vault (encrypted with passphrase)
+7. Write UUID to device's `config.toml` (`personal_group` field)
+8. Push personal group descriptor to device's node
 
 ---
 
@@ -341,7 +365,7 @@ encrypted blobs to peers). They cannot decrypt, so the effective access is
 
 - Migrate existing private items to personal group
 - Re-encrypt with personal group PSK
-- Set `group_id = personal-{entity_id}`, `key_version = 2`
+- Set `group_id = <personal-group-uuid>`, `key_version = 2`
 - Drop `key_version = 1` codepath
 
 ### 8.4 Phase 4: Portal Node-Backed Storage
@@ -362,6 +386,7 @@ encrypted blobs to peers). They cannot decrypt, so the effective access is
 - The node bridge skip logic for `key_version = 1` items
 - The portal identity cards gap (keepers replicate everything)
 - Separate backup strategy for private data (replication IS the backup)
+- Entity-to-group correlation via group_id (opaque UUID, see metadata-privacy.md)
 
 ## 10. What This Preserves
 
