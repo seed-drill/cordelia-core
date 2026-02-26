@@ -509,7 +509,12 @@ culture determines which is canonical (or both are retained as divergent perspec
 
 ---
 
-## 6. Envelope Encryption (R2-009 Stub)
+## 6. Envelope Encryption
+
+> **DEPRECATED**: This section is superseded by [encryption-specification.md](encryption-specification.md),
+> which is the single source of truth for Cordelia's encryption architecture. The spec
+> defines the unified envelope pattern (ECIES with X25519), key hierarchy, vault schema,
+> key ring, and migration path. Retained below for historical context only.
 
 ### 6.1 R2: Degenerate Case
 

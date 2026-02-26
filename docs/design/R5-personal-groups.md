@@ -160,6 +160,11 @@ they are the entity's off-device backup.
 
 ## 4. Encryption Model
 
+> **DEPRECATED**: Sections 4, 5, and 6 are superseded by [encryption-specification.md](encryption-specification.md),
+> which is the single source of truth for Cordelia's encryption architecture. The spec
+> defines the unified envelope pattern (ECIES with X25519), key hierarchy, vault schema,
+> key ring, and all user journeys. Retained below for historical context only.
+
 ### 4.1 Personal Group PSK
 
 Each personal group has its own PSK (Pre-Shared Key):

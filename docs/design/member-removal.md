@@ -42,6 +42,11 @@ Step 3 (`groups/delete` on the removed member's node) is critical -- it writes a
 
 ## 2. Threat Model
 
+> **DEPRECATED**: Sections 2 and 3 are superseded by [encryption-specification.md](encryption-specification.md),
+> which is the single source of truth for Cordelia's encryption architecture. See
+> Section 5.7 (Member Removal) and Section 1.2 (Threat Model) in that document.
+> Retained below for historical context only.
+
 ### 2.1 What a removed member retains
 
 After soft removal + `groups/delete` on their node:
