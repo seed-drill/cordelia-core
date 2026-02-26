@@ -56,7 +56,7 @@ Every entity has exactly one personal group, auto-created at enrolment:
 Personal group: <opaque-uuid-v4>
   Owner: {entity_id}
   Members: {entity_id} (owner), keeper-1 (member), keeper-2 (member), ...
-  Culture: { "broadcast_eagerness": "taciturn" }
+  Culture: { "broadcast_eagerness": "chatty" }
   Encryption: Group PSK (AES-256-GCM)
 ```
 
@@ -97,16 +97,50 @@ Shared groups continue to use the existing content-addressed ID scheme.
 
 ### 3.3 Culture
 
-Personal groups use `taciturn` culture:
+Personal groups use `chatty` culture:
 
-- No eager push on write (L1 changes frequently during sessions)
-- Anti-entropy sync at configured interval (default 300s / 5 min)
-- Acceptable convergence for L1 hot context, which changes at session
-  boundaries (start/end), not mid-session
-- Keeps bandwidth minimal for keepers that may host many entities
+- Eager push on write: agent pushes to relay peers, relay re-pushes to keepers
+- Near-instant convergence (push latency only, no anti-entropy wait)
+- Anti-entropy at 60s acts as a safety net for missed pushes
 
-Convergence time is bounded by `sync_interval_taciturn_secs` and must be
-validated in the Docker E2E test environment.
+**Rationale**: Eager push resolves the transparent relay anti-entropy targeting
+gap. Transparent relays (boot nodes) do not include learned groups in their
+anti-entropy sync sets and do not advertise them to peers via group exchange.
+Under taciturn culture, items written by an agent would reach a transparent
+relay via push (Gate 1 always targets relays), but the relay would never
+pull new items via anti-entropy, and downstream peers would never learn to
+target the relay for sync. Chatty culture bypasses this gap entirely: the
+relay re-pushes received items to all active peers, and anti-entropy serves
+only as a fallback. Personal data volume is small (L1 hot context, personal
+L2 memories), so the bandwidth cost of eager push is negligible.
+
+This aligns with the Pattern C specification in `group-lifecycle.md`, which
+already defines personal groups as chatty.
+
+#### Trade-offs considered
+
+- **Taciturn was the original choice** to minimise keeper bandwidth when a
+  keeper hosts many entities. Taciturn avoids per-write push traffic, relying
+  on periodic anti-entropy sync at 900s intervals.
+
+- **Taciturn creates a replication dead-end through transparent relays.**
+  Boot nodes accept items via push (transparent posture) but do not include
+  learned groups in their anti-entropy sync sets and do not advertise learned
+  groups to peers. Under taciturn culture, an item reaching a boot node via
+  push has no onward path -- no peer discovers that the boot node holds the
+  group, and the boot node never initiates sync for it.
+
+- **Chatty uses eager push, which targets relay peers directly.** When the
+  agent pushes to a relay, the relay stores the item and re-pushes to all
+  active peers (including keepers). This bypasses the anti-entropy gap
+  entirely. Convergence is near-instant (push latency only).
+
+- **At scale (500+ entities per keeper), chatty may need revisiting.**
+  Each entity's personal group generates per-write push traffic to every
+  keeper. For a keeper hosting 500 entities with frequent L1 writes, this
+  could produce significant inbound push volume. See future work on network
+  dynamics modelling for bandwidth projections and potential throttling
+  strategies.
 
 ### 3.4 Membership
 
@@ -170,7 +204,7 @@ devices and the vault. Keepers never receive it.
 From a keeper's perspective, personal group items are indistinguishable from
 any other group's items:
 
-- Keeper receives encrypted blob via anti-entropy sync
+- Keeper receives encrypted blob via eager push (or anti-entropy fallback)
 - Keeper stores blob in its `l2_items` table with `group_id = <opaque-uuid>`
 - Keeper participates in GroupExchange, advertising the personal group descriptor
 - Keeper cannot decrypt (no PSK)
@@ -410,7 +444,7 @@ Deploy a 3-node Docker environment:
 - Node C: second keeper (DR)
 
 Write L1 hot context on Node A. Verify:
-- Within `sync_interval_taciturn_secs` (300s), encrypted blob appears on B and C
+- Within seconds (eager push), encrypted blob appears on B and C
 - B and C cannot decrypt (no PSK)
 - Fetch PSK from vault, decrypt on B -> matches original
 

@@ -344,8 +344,21 @@ agent-alpha-1  →  edge-alpha  →  keeper-alpha-1
 - Keepers MUST have the group created (Gate 3 requires `our_groups` membership)
 - Relay nodes see only the opaque UUID, not the entity identity
 
-**Culture**: Taciturn (personal memory syncs at anti-entropy interval, not
-eagerly pushed on every write -- see R5 Section 3.3)
+**Culture**: Chatty (personal memory replicates immediately via eager push
+-- see R5 Section 3.3)
+
+**Replication path**: Agent writes item -> eager push to relay (edge) ->
+relay stores and re-pushes to keepers -> keepers accept (Gate 3: `our_groups`).
+Convergence is near-instant (push latency only, not anti-entropy intervals).
+
+**Note on transparent relay limitation**: Taciturn was originally specified
+for personal groups but creates a replication dead-end through transparent
+relays (boot nodes). Transparent relays do not include learned groups in
+their anti-entropy sync sets and do not advertise them to peers. Under
+taciturn culture, items reaching a boot node via push have no onward path.
+Chatty culture resolves this by using eager push, which triggers relay
+re-push to all active peers, bypassing the anti-entropy gap entirely. See
+R5 Section 3.3 for the full rationale and trade-off analysis.
 
 **Isolation**: Items reach only the org's edge and keeper nodes. They do NOT
 cross to other orgs because other orgs' edges don't learn the personal group
@@ -379,23 +392,26 @@ t=60+  Agent writes item → pushes to edge (is_relay) → edge accepts
        → edge re-pushes to keeper → keeper accepts (our_groups)
 ```
 
-### 8.2 Timeline for Taciturn Group (No Edge Provisioning)
+### 8.2 Timeline for Personal Group (Chatty, No Edge Provisioning)
 
-Taciturn groups rely on anti-entropy sync. Two exchange cycles are needed:
-one for the relay to learn the group, one for peers to discover the relay
-handles it.
+Personal groups use chatty culture. One exchange cycle is needed for the
+relay to learn the group; after that, eager push handles item delivery.
 
 ```
 t=0     Group created on agent + keepers only
 t=0-60  Exchange tick 1: agent advertises group → edge learns it
         (edge adds to relay_accepted_groups + relay_learned_groups)
-t=60    Exchange tick 2: edge advertises learned group → keeper sees it
-        (keeper recomputes group_intersection with edge -- now includes group)
-t=60+   Agent writes item (taciturn: no push, item stays on agent)
-t=120   Edge's anti-entropy sync: pulls item from agent (sync_base_tick)
-t=180   Keeper's anti-entropy sync: targets edge (group_intersection match),
-        pulls item from edge → stores locally (Gate 3: our_groups)
+t=60+   Agent writes item → eager push to edge (is_relay)
+        → edge accepts (Gate 2: dynamic, learned group)
+        → edge re-pushes to keeper (active peer)
+        → keeper accepts (Gate 3: our_groups) → stores locally
 ```
+
+**Note**: Prior to this change, personal groups used taciturn culture and
+relied on anti-entropy sync through the relay chain (worst case ~240s).
+Taciturn was changed to chatty because transparent relays (boot nodes) do
+not include learned groups in anti-entropy sync sets, creating a replication
+dead-end. Chatty eager push bypasses this limitation. See R5 Section 3.3.
 
 ### 8.3 Worst-Case Latency
 
@@ -403,8 +419,8 @@ t=180   Keeper's anti-entropy sync: targets edge (group_intersection match),
 |---------|------|-----------|
 | Chatty, 1 hop (agent → keeper via edge) | 2 | 60s (group exchange) + push |
 | Chatty, 2 hops (agent → edge → boot → edge → keeper) | 4 | 60s + push chain |
-| Taciturn, 1 hop (no edge provision) | 2 | 120s (2x exchange) + 60s (sync) + 60s (sync) = 240s |
-| Taciturn, 2 hops (via relay chain) | 3 | 120s + 60s + 60s + 60s = 300s |
+| Chatty personal group (no edge provision) | 2 | 60s (1x exchange) + push |
+| Taciturn (archival/backup groups) | 2 | 120s (2x exchange) + 900s (sync interval) |
 
 For **immediate** replication after group creation, trigger a reconnect
 or explicit group exchange rather than waiting for the periodic tick.

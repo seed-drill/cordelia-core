@@ -394,10 +394,11 @@ agent-alpha-1 --> edge-alpha --> keeper-alpha-1
                                   (store)
 ```
 
-- Culture: chatty (personal memory replicates immediately)
+- Culture: chatty (personal memory replicates immediately via eager push)
 - Provisioning: created during enrollment on agent + keepers; edge learns automatically
 - Convergence: 2-5s to keepers
 - Encryption: group PSK stored in vault (R5), keepers store ciphertext only
+- See [R5 Personal Groups, Section 3.3](../design/R5-personal-groups.md#33-culture) for the rationale behind chatty culture and trade-off analysis
 
 ---
 
