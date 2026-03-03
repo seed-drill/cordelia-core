@@ -395,9 +395,9 @@ encrypt_aes256gcm() {
     " -- "$plaintext"
 }
 
-# write_encrypted_to_node HOST ITEM_ID TYPE ENCRYPTED_JSON GROUP_ID -- write pre-encrypted blob to node
+# write_encrypted_to_node HOST ITEM_ID TYPE ENCRYPTED_JSON GROUP_ID [KEY_VERSION]
 write_encrypted_to_node() {
-    local host="$1" item_id="$2" type="$3" encrypted_json="$4" group="$5"
+    local host="$1" item_id="$2" type="$3" encrypted_json="$4" group="$5" key_ver="${6:-1}"
     # The encrypted_json IS the data blob -- the node stores it opaquely
     node_api "$host" "l2/write" "{
         \"item_id\": \"${item_id}\",
@@ -408,7 +408,7 @@ write_encrypted_to_node() {
             \"group_id\": \"${group}\",
             \"owner_id\": \"e2e-test\",
             \"author_id\": \"e2e-test\",
-            \"key_version\": 1
+            \"key_version\": ${key_ver}
         }
     }"
 }

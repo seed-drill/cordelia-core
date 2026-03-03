@@ -506,7 +506,7 @@ clear_proxy_key_cache
 ROT_ITEM_V2="e2e-rot-v2-${TS}"
 PLAIN_V2="{\"id\":\"rotation-v2\",\"type\":\"pattern\",\"content\":\"written with key v2\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
 ENC_V2=$(encrypt_aes256gcm "$ROT_PSK_V2" "$PLAIN_V2")
-write_encrypted_to_node "keeper-seeddrill-1" "$ROT_ITEM_V2" "learning" "$ENC_V2" "$ROT_GROUP" > /dev/null 2>&1
+write_encrypted_to_node "keeper-seeddrill-1" "$ROT_ITEM_V2" "learning" "$ENC_V2" "$ROT_GROUP" 2 > /dev/null 2>&1
 
 sleep 1
 
@@ -588,7 +588,7 @@ clear_proxy_key_cache
 MEM_ITEM2="e2e-member-post-${TS}"
 PLAIN_MEM2="{\"id\":\"post-removal-item\",\"type\":\"pattern\",\"content\":\"written after alice removed\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
 ENC_MEM2=$(encrypt_aes256gcm "$MEM_PSK_V2" "$PLAIN_MEM2")
-write_encrypted_to_node "keeper-seeddrill-1" "$MEM_ITEM2" "learning" "$ENC_MEM2" "$MEM_GROUP" > /dev/null 2>&1
+write_encrypted_to_node "keeper-seeddrill-1" "$MEM_ITEM2" "learning" "$ENC_MEM2" "$MEM_GROUP" 2 > /dev/null 2>&1
 
 sleep 1
 
