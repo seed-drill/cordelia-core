@@ -114,19 +114,18 @@ echo "[2] Enrollment with ECIES envelope PSK distribution..."
 T2_START=$(date +%s)
 T2_OK=true
 
-# Generate an X25519 keypair inside the portal container (has @noble/curves)
-KEYPAIR_JSON=$(docker exec cordelia-e2e-portal node -e "
-    const crypto = require('crypto');
-    const { x25519 } = require('@noble/curves/ed25519');
-    const privBytes = crypto.randomBytes(32);
-    privBytes[0] &= 0xf8;
-    privBytes[31] &= 0x7f;
-    privBytes[31] |= 0x40;
-    const pubBytes = Buffer.from(x25519.scalarMultBase(privBytes));
-    console.log(JSON.stringify({
-        private_key: Buffer.from(privBytes).toString('hex'),
-        public_key: pubBytes.toString('hex')
-    }));
+# Generate an X25519 keypair using Node's native crypto (available in Node 18+)
+KEYPAIR_JSON=$(docker exec cordelia-e2e-portal node --input-type=module -e "
+import crypto from 'node:crypto';
+const kp = crypto.generateKeyPairSync('x25519');
+const privDer = kp.privateKey.export({ type: 'pkcs8', format: 'der' });
+const pubDer = kp.publicKey.export({ type: 'spki', format: 'der' });
+const privRaw = privDer.subarray(privDer.length - 32);
+const pubRaw = pubDer.subarray(pubDer.length - 32);
+console.log(JSON.stringify({
+    private_key: Buffer.from(privRaw).toString('hex'),
+    public_key: Buffer.from(pubRaw).toString('hex')
+}));
 " 2>/dev/null || echo "{}")
 
 X25519_PRIV=$(echo "$KEYPAIR_JSON" | jq -r '.private_key // empty' 2>/dev/null || echo "")
@@ -217,34 +216,34 @@ if $T2_OK && [ -n "$ENVELOPE" ] && [ "$ENVELOPE" != "null" ]; then
     # Step 5: Decrypt the ECIES envelope using our X25519 private key
     # This proves the full ECIES flow: portal envelope-encrypted the PSK,
     # and the device can decrypt it with its X25519 private key.
-    DECRYPTED_PSK=$(docker exec cordelia-e2e-portal node -e "
-        const crypto = require('crypto');
-        const { sha256 } = require('@noble/hashes/sha2');
-        const { hkdf } = require('@noble/hashes/hkdf');
-        const { x25519 } = require('@noble/curves/ed25519');
+    DECRYPTED_PSK=$(docker exec -w /app cordelia-e2e-portal node --input-type=module -e "
+import crypto from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { x25519 } from '@noble/curves/ed25519.js';
 
-        const envelope = JSON.parse('${ENVELOPE}');
-        const privKey = Buffer.from('${X25519_PRIV}', 'hex');
+const envelope = JSON.parse('${ENVELOPE}');
+const privKey = Buffer.from('${X25519_PRIV}', 'hex');
 
-        const ephPub = Buffer.from(envelope.ephemeralPublicKey, 'base64');
-        const iv = Buffer.from(envelope.iv, 'base64');
-        const authTag = Buffer.from(envelope.authTag, 'base64');
-        const ciphertext = Buffer.from(envelope.ciphertext, 'base64');
+const ephPub = Buffer.from(envelope.ephemeralPublicKey, 'base64');
+const iv = Buffer.from(envelope.iv, 'base64');
+const authTag = Buffer.from(envelope.authTag, 'base64');
+const ciphertext = Buffer.from(envelope.ciphertext, 'base64');
 
-        // ECDH
-        const shared = Buffer.from(x25519.scalarMult(privKey, ephPub));
+// ECDH
+const shared = Buffer.from(x25519.scalarMult(privKey, ephPub));
 
-        // HKDF-SHA256
-        const salt = new Uint8Array(32);
-        const info = new TextEncoder().encode('cordelia-key-wrap-v1');
-        const wrappingKey = hkdf(sha256, shared, salt, info, 32);
+// HKDF-SHA256
+const salt = new Uint8Array(32);
+const info = new TextEncoder().encode('cordelia-key-wrap-v1');
+const wrappingKey = hkdf(sha256, shared, salt, info, 32);
 
-        // AES-256-GCM decrypt
-        const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(wrappingKey), iv, { authTagLength: 16 });
-        decipher.setAuthTag(authTag);
-        const psk = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-        console.log(psk.toString('hex'));
-    " 2>/dev/null || echo "")
+// AES-256-GCM decrypt
+const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(wrappingKey), iv, { authTagLength: 16 });
+decipher.setAuthTag(authTag);
+const psk = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+console.log(psk.toString('hex'));
+" 2>/dev/null || echo "")
 
     if [ -n "$DECRYPTED_PSK" ] && [ ${#DECRYPTED_PSK} -eq 64 ]; then
         pass "ECIES envelope decrypted successfully (PSK: ${DECRYPTED_PSK:0:16}...)"
