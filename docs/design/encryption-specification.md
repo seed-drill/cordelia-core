@@ -142,8 +142,7 @@ This is implemented in libsodium (`crypto_sign_ed25519_sk_to_curve25519`) and Ru
 ```json
 {
   "_encrypted": true,
-  "version": 2,
-  "key_version": 3,
+  "version": 1,
   "iv": "<base64, 12 bytes>",
   "authTag": "<base64, 16 bytes>",
   "ciphertext": "<base64>"
@@ -153,11 +152,15 @@ This is implemented in libsodium (`crypto_sign_ed25519_sk_to_curve25519`) and Ru
 | Field | Description |
 |-------|-------------|
 | `_encrypted` | Always `true`. Sentinel for `isEncryptedPayload()` detection. |
-| `version` | Payload format version. `1` = legacy (scrypt-derived key). `2` = group PSK. |
-| `key_version` | Which version of the group's PSK was used. Indexes into the key ring. |
+| `version` | Payload format version. Always `1`. (The encryption method -- legacy scrypt vs group PSK -- is determined by `key_version` in item metadata, not the payload format.) |
 | `iv` | Random 12-byte IV, base64-encoded. |
 | `authTag` | GCM authentication tag, base64-encoded. |
 | `ciphertext` | Encrypted JSON content, base64-encoded. |
+
+The `key_version` field that determines which PSK was used is stored in the item's metadata on the Rust node (not inside the encrypted payload). This allows the proxy to select the correct PSK from the key ring before decryption:
+
+- `key_version = 1`: legacy scrypt-derived key (pre-migration items)
+- `key_version >= 2`: group PSK from the key ring
 
 ### 4.2 Vault Entry (Per-Member Encrypted PSK)
 
@@ -475,16 +478,17 @@ The key ring is stored in the vault: one `vault_group_keys` row per (entity, gro
 
 ### 9.2 Phase 2: New Items Use Group PSK
 
-- All new L1/L2 writes use group PSK with `key_version >= 1` (payload version=2)
-- Existing items remain with payload version=1 (scrypt-derived key)
-- Proxy maintains backward-compatible decryption for version=1 items
+- All new L1/L2 writes use group PSK with `key_version >= 2` in item metadata
+- Existing items remain with `key_version = 1` (scrypt-derived key)
+- Payload format (`version: 1`) is unchanged -- the discriminator is `key_version` in metadata
+- Proxy maintains backward-compatible decryption for key_version=1 items
 - Node bridge stops skipping any encrypted items (replicate everything)
 
 ### 9.3 Phase 3: Backfill
 
-- Re-encrypt existing items from version=1 to version=2
+- Re-encrypt existing items from key_version=1 to key_version=2
 - Set `group_id`, `key_version` on migrated items
-- After all items migrated, remove version=1 decryption codepath
+- After all items migrated, remove key_version=1 decryption codepath
 
 ### 9.4 Phase 4: Cleanup
 
