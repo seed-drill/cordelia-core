@@ -27,6 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PASSED=0
 FAILED=0
 TS=$(date +%s)
+CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TIMEOUT=30
 
 declare -a R_NAMES=()
@@ -251,7 +252,7 @@ fi
 if $T3_OK; then
     # Encrypt test data using the PSK and write to Rust node
     TEST_ITEM_ID="e2e-enc-item-${TS}"
-    PLAINTEXT_DATA='{"type":"learning","subtype":"pattern","name":"e2e-enc-test","details":"encryption e2e test data","tags":["e2e","encryption"]}'
+    PLAINTEXT_DATA="{\"id\":\"e2e-enc-test\",\"type\":\"pattern\",\"content\":\"encryption e2e test data\",\"tags\":[\"e2e\",\"encryption\"],\"created_at\":\"${CREATED_AT}\"}"
 
     ENCRYPTED_BLOB=$(encrypt_aes256gcm "$TEST_PSK" "$PLAINTEXT_DATA")
     if [ -n "$ENCRYPTED_BLOB" ] && echo "$ENCRYPTED_BLOB" | jq -e '._encrypted == true' > /dev/null 2>&1; then
@@ -292,11 +293,11 @@ if $T3_OK; then
     PROXY_READ=$(echo "$PROXY_RAW" | grep -v "__HTTP_STATUS:")
     echo "  DEBUG: proxy GET /api/l2/item/${TEST_ITEM_ID} -> HTTP ${PROXY_HTTP}: ${PROXY_READ:0:300}"
 
-    if echo "$PROXY_READ" | jq -e '.name == "e2e-enc-test"' > /dev/null 2>&1; then
-        pass "proxy decrypted item correctly (name matches)"
-    elif echo "$PROXY_READ" | jq -e '.name' > /dev/null 2>&1; then
-        NAME=$(echo "$PROXY_READ" | jq -r '.name')
-        fail "proxy returned wrong name: ${NAME}"
+    if echo "$PROXY_READ" | jq -e '.content == "encryption e2e test data"' > /dev/null 2>&1; then
+        pass "proxy decrypted item correctly (content matches)"
+    elif echo "$PROXY_READ" | jq -e '.content' > /dev/null 2>&1; then
+        CONTENT=$(echo "$PROXY_READ" | jq -r '.content')
+        fail "proxy returned wrong content: ${CONTENT}"
         T3_OK=false
     elif echo "$PROXY_READ" | jq -e '._encrypted == true' > /dev/null 2>&1; then
         fail "proxy returned encrypted blob (decryption failed)"
@@ -314,7 +315,7 @@ if $T3_OK; then
 
     if echo "$NODE_DATA" | jq -e '._encrypted == true' > /dev/null 2>&1; then
         pass "Rust node stores encrypted blob (_encrypted: true)"
-    elif echo "$NODE_DATA" | jq -e '.name == "e2e-enc-test"' > /dev/null 2>&1; then
+    elif echo "$NODE_DATA" | jq -e '.content == "encryption e2e test data"' > /dev/null 2>&1; then
         fail "Rust node stores PLAINTEXT (expected encrypted blob)"
         T3_OK=false
     else
@@ -344,7 +345,7 @@ T4_OK=true
 # The item uses shared-xorg group for cross-org visibility.
 REPL_GROUP="shared-xorg"
 REPL_ITEM_ID="e2e-repl-enc-${TS}"
-REPL_PLAINTEXT='{"type":"learning","subtype":"insight","name":"e2e-repl-enc","details":"replication test","tags":["e2e"]}'
+REPL_PLAINTEXT="{\"id\":\"e2e-repl-enc\",\"type\":\"insight\",\"content\":\"replication test\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
 
 # Provision same PSK on proxy for this group (for reading back)
 REPL_PSK=$(generate_psk)
@@ -423,8 +424,8 @@ node_api "keeper-seeddrill-1" "groups/create" \
 # Encrypt and write items to each group
 ITEM_A="e2e-iso-A-${TS}"
 ITEM_B="e2e-iso-B-${TS}"
-PLAIN_A='{"type":"learning","subtype":"pattern","name":"group-a-secret","details":"alpha secret","tags":["e2e"]}'
-PLAIN_B='{"type":"learning","subtype":"pattern","name":"group-b-secret","details":"bravo secret","tags":["e2e"]}'
+PLAIN_A="{\"id\":\"group-a-secret\",\"type\":\"pattern\",\"content\":\"alpha secret\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
+PLAIN_B="{\"id\":\"group-b-secret\",\"type\":\"pattern\",\"content\":\"bravo secret\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
 
 ENC_A=$(encrypt_aes256gcm "$PSK_A" "$PLAIN_A")
 ENC_B=$(encrypt_aes256gcm "$PSK_B" "$PLAIN_B")
@@ -437,14 +438,14 @@ sleep 1
 READ_A=$(proxy_read_item "$ITEM_A" || echo "{}")
 READ_B=$(proxy_read_item "$ITEM_B" || echo "{}")
 
-if echo "$READ_A" | jq -e '.name == "group-a-secret"' > /dev/null 2>&1; then
+if echo "$READ_A" | jq -e '.id == "group-a-secret"' > /dev/null 2>&1; then
     pass "group A item decrypted correctly"
 else
     fail "group A item decryption failed: $(echo "$READ_A" | jq -c . 2>/dev/null | head -c 200)"
     T5_OK=false
 fi
 
-if echo "$READ_B" | jq -e '.name == "group-b-secret"' > /dev/null 2>&1; then
+if echo "$READ_B" | jq -e '.id == "group-b-secret"' > /dev/null 2>&1; then
     pass "group B item decrypted correctly"
 else
     fail "group B item decryption failed: $(echo "$READ_B" | jq -c . 2>/dev/null | head -c 200)"
@@ -491,7 +492,7 @@ node_api "keeper-seeddrill-1" "groups/create" \
 
 # Write item with v1 key
 ROT_ITEM_V1="e2e-rot-v1-${TS}"
-PLAIN_V1='{"type":"learning","subtype":"pattern","name":"rotation-v1","details":"written with key v1","tags":["e2e"]}'
+PLAIN_V1="{\"id\":\"rotation-v1\",\"type\":\"pattern\",\"content\":\"written with key v1\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
 ENC_V1=$(encrypt_aes256gcm "$ROT_PSK_V1" "$PLAIN_V1")
 write_encrypted_to_node "keeper-seeddrill-1" "$ROT_ITEM_V1" "learning" "$ENC_V1" "$ROT_GROUP" > /dev/null 2>&1
 
@@ -503,7 +504,7 @@ clear_proxy_key_cache
 
 # Write item with v2 key
 ROT_ITEM_V2="e2e-rot-v2-${TS}"
-PLAIN_V2='{"type":"learning","subtype":"pattern","name":"rotation-v2","details":"written with key v2","tags":["e2e"]}'
+PLAIN_V2="{\"id\":\"rotation-v2\",\"type\":\"pattern\",\"content\":\"written with key v2\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
 ENC_V2=$(encrypt_aes256gcm "$ROT_PSK_V2" "$PLAIN_V2")
 write_encrypted_to_node "keeper-seeddrill-1" "$ROT_ITEM_V2" "learning" "$ENC_V2" "$ROT_GROUP" > /dev/null 2>&1
 
@@ -511,7 +512,7 @@ sleep 1
 
 # Read v1 item -- should still be decryptable (key ring has v1)
 READ_V1=$(proxy_read_item "$ROT_ITEM_V1" || echo "{}")
-if echo "$READ_V1" | jq -e '.name == "rotation-v1"' > /dev/null 2>&1; then
+if echo "$READ_V1" | jq -e '.id == "rotation-v1"' > /dev/null 2>&1; then
     pass "v1 item still readable after key rotation"
 else
     fail "v1 item not readable after rotation: $(echo "$READ_V1" | jq -c . 2>/dev/null | head -c 200)"
@@ -520,7 +521,7 @@ fi
 
 # Read v2 item -- should be decryptable with v2 key
 READ_V2=$(proxy_read_item "$ROT_ITEM_V2" || echo "{}")
-if echo "$READ_V2" | jq -e '.name == "rotation-v2"' > /dev/null 2>&1; then
+if echo "$READ_V2" | jq -e '.id == "rotation-v2"' > /dev/null 2>&1; then
     pass "v2 item readable with rotated key"
 else
     fail "v2 item not readable: $(echo "$READ_V2" | jq -c . 2>/dev/null | head -c 200)"
@@ -558,14 +559,14 @@ node_api "keeper-seeddrill-1" "groups/add_member" \
 
 # Member writes item
 MEM_ITEM="e2e-member-item-${TS}"
-PLAIN_MEM='{"type":"learning","subtype":"pattern","name":"member-wrote-this","details":"written by alice","tags":["e2e"]}'
+PLAIN_MEM="{\"id\":\"member-wrote-this\",\"type\":\"pattern\",\"content\":\"written by alice\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
 ENC_MEM=$(encrypt_aes256gcm "$MEM_PSK_V1" "$PLAIN_MEM")
 write_encrypted_to_node "keeper-seeddrill-1" "$MEM_ITEM" "learning" "$ENC_MEM" "$MEM_GROUP" > /dev/null 2>&1
 
 # Verify item readable
 sleep 1
 READ_MEM=$(proxy_read_item "$MEM_ITEM" || echo "{}")
-if echo "$READ_MEM" | jq -e '.name == "member-wrote-this"' > /dev/null 2>&1; then
+if echo "$READ_MEM" | jq -e '.id == "member-wrote-this"' > /dev/null 2>&1; then
     pass "member's item readable before removal"
 else
     fail "member's item not readable before removal"
@@ -585,7 +586,7 @@ clear_proxy_key_cache
 
 # Write new item with v2 key (post-removal)
 MEM_ITEM2="e2e-member-post-${TS}"
-PLAIN_MEM2='{"type":"learning","subtype":"pattern","name":"post-removal-item","details":"written after alice removed","tags":["e2e"]}'
+PLAIN_MEM2="{\"id\":\"post-removal-item\",\"type\":\"pattern\",\"content\":\"written after alice removed\",\"tags\":[\"e2e\"],\"created_at\":\"${CREATED_AT}\"}"
 ENC_MEM2=$(encrypt_aes256gcm "$MEM_PSK_V2" "$PLAIN_MEM2")
 write_encrypted_to_node "keeper-seeddrill-1" "$MEM_ITEM2" "learning" "$ENC_MEM2" "$MEM_GROUP" > /dev/null 2>&1
 
@@ -593,7 +594,7 @@ sleep 1
 
 # Old item (v1) still readable by remaining members
 READ_OLD=$(proxy_read_item "$MEM_ITEM" || echo "{}")
-if echo "$READ_OLD" | jq -e '.name == "member-wrote-this"' > /dev/null 2>&1; then
+if echo "$READ_OLD" | jq -e '.id == "member-wrote-this"' > /dev/null 2>&1; then
     pass "old item (v1) still readable by remaining members"
 else
     fail "old item not readable after key rotation"
@@ -602,7 +603,7 @@ fi
 
 # New item (v2) readable
 READ_NEW=$(proxy_read_item "$MEM_ITEM2" || echo "{}")
-if echo "$READ_NEW" | jq -e '.name == "post-removal-item"' > /dev/null 2>&1; then
+if echo "$READ_NEW" | jq -e '.id == "post-removal-item"' > /dev/null 2>&1; then
     pass "new item (v2) readable with rotated key"
 else
     fail "new item not readable with rotated key"
@@ -626,7 +627,7 @@ T8_OK=true
 # Create a test user with L1 context
 OFFBOARD_USER="e2e-offboard-${TS}"
 proxy_put "/api/hot/${OFFBOARD_USER}" \
-    "{\"identity\":{\"user_id\":\"${OFFBOARD_USER}\",\"display_name\":\"Offboard Test\"}}" > /dev/null 2>&1
+    "{\"identity\":{\"user_id\":\"${OFFBOARD_USER}\",\"display_name\":\"Offboard Test\"}}" > /dev/null 2>&1 || true
 
 # Export profile
 EXPORT=$(proxy_export_profile "$OFFBOARD_USER" || echo "{}")

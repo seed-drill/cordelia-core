@@ -251,6 +251,8 @@ portal_create_session() {
                  echo "sess-$(date +%s)-${RANDOM}")
 
     # Create user and session in portal DB via docker exec + node
+    # IMPORTANT: Use prepared statements with ? placeholders. SQLite treats
+    # "value" (double-quoted) as a column identifier, not a string literal.
     local db_result
     db_result=$(docker exec cordelia-e2e-portal node -e "
         const Database = require('better-sqlite3');
@@ -258,8 +260,9 @@ portal_create_session() {
         try {
             const db = new Database(dbPath);
             db.pragma('journal_mode = WAL');
-            db.exec('INSERT OR IGNORE INTO users (entity_id, display_name) VALUES (\"${entity_id}\", \"E2E Test User\")');
-            db.exec('INSERT INTO sessions (id, entity_id, provider, expires_at) VALUES (\"${session_id}\", \"${entity_id}\", \"test\", datetime(\"now\", \"+7 days\"))');
+            const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+            db.prepare('INSERT OR IGNORE INTO users (entity_id, display_name) VALUES (?, ?)').run('${entity_id}', 'E2E Test User');
+            db.prepare('INSERT INTO sessions (id, entity_id, provider, expires_at) VALUES (?, ?, ?, ?)').run('${session_id}', '${entity_id}', 'test', expiresAt);
             const row = db.prepare('SELECT id FROM sessions WHERE id = ?').get('${session_id}');
             db.close();
             console.log(row ? 'ok' : 'VERIFY_FAIL');
