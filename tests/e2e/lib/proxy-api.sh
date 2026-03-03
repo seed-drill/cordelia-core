@@ -315,16 +315,19 @@ generate_psk() {
 # provision_proxy_psk GROUP_ID PSK_HEX [VERSION] -- write PSK to proxy container's key ring
 provision_proxy_psk() {
     local group_id="$1" psk_hex="$2" version="${3:-1}"
-    docker exec cordelia-e2e-proxy sh -c "
-        mkdir -p /home/cordelia/.cordelia/group-keys 2>/dev/null || mkdir -p ~/.cordelia/group-keys
-        KEYDIR=\$(ls -d /home/cordelia/.cordelia/group-keys 2>/dev/null || echo ~/.cordelia/group-keys)
-        cat > \"\${KEYDIR}/${group_id}.json\" <<KEYEOF
-{
-  \"versions\": { \"${version}\": \"${psk_hex}\" },
-  \"latest\": ${version}
-}
-KEYEOF
-        chmod 600 \"\${KEYDIR}/${group_id}.json\"
+    # Use node to resolve homedir, same path the proxy uses at runtime
+    docker exec cordelia-e2e-proxy node -e "
+        const fs = require('fs');
+        const path = require('path');
+        const os = require('os');
+        const keyDir = path.join(os.homedir(), '.cordelia', 'group-keys');
+        fs.mkdirSync(keyDir, { recursive: true });
+        const keyFile = path.join(keyDir, '${group_id}.json');
+        fs.writeFileSync(keyFile, JSON.stringify({
+            versions: { '${version}': '${psk_hex}' },
+            latest: ${version}
+        }, null, 2), { mode: 0o600 });
+        console.log('ok: ' + keyFile);
     "
 }
 
