@@ -28,7 +28,8 @@ proxy_get() {
 
 # proxy_post PATH BODY -- POST request to proxy
 proxy_post() {
-    local path="$1" body="${2:-{}}"
+    local path="$1" body="${2}"
+    : "${body:="{}"}"
     curl -sf --max-time 10 -X POST \
         -H "Content-Type: application/json" \
         -d "$body" \
@@ -37,7 +38,8 @@ proxy_post() {
 
 # proxy_put PATH BODY -- PUT request to proxy
 proxy_put() {
-    local path="$1" body="${2:-{}}"
+    local path="$1" body="${2}"
+    : "${body:="{}"}"
     curl -sf --max-time 10 -X PUT \
         -H "Content-Type: application/json" \
         -d "$body" \
@@ -128,7 +130,8 @@ portal_get() {
 
 # portal_post PATH BODY COOKIE -- POST request to portal with session cookie
 portal_post() {
-    local path="$1" body="${2:-{}}" cookie="${3:-}"
+    local path="$1" body="${2}" cookie="${3:-}"
+    : "${body:="{}"}"
     local cookie_args=""
     [ -n "$cookie" ] && cookie_args="-b portal_session=${cookie}"
     # shellcheck disable=SC2086
@@ -267,7 +270,8 @@ portal_create_session() {
 
 # node_api HOST ENDPOINT [BODY] -- POST to Rust node API via orchestrator
 node_api() {
-    local host="$1" endpoint="$2" body="${3:-{}}"
+    local host="$1" endpoint="$2" body="${3}"
+    : "${body:="{}"}"
     docker exec "$ORCH" curl -sf --max-time 5 \
         -X POST \
         -H "Authorization: Bearer ${BEARER_TOKEN}" \
