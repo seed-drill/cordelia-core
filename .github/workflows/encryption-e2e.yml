@@ -7,6 +7,7 @@ on:
       - 'tests/e2e/encryption-e2e.sh'
       - 'tests/e2e/lib/proxy-api.sh'
       - 'tests/e2e/topology-encryption.env'
+      - 'tests/e2e/gen-compose-zoned.sh'
       - '.github/workflows/encryption-e2e.yml'
   workflow_dispatch:
 
@@ -32,6 +33,11 @@ jobs:
           repository: seed-drill/cordelia-portal
           path: cordelia-portal
           token: ${{ secrets.CROSS_REPO_PAT }}
+
+      - name: Cleanup stale containers
+        run: |
+          docker compose -f tests/e2e/docker-compose.generated.yml down -v --remove-orphans 2>/dev/null || true
+          docker volume prune -f 2>/dev/null || true
 
       - name: Build node image
         run: docker build -t cordelia-node:test -f tests/e2e/Dockerfile.test .

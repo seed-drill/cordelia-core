@@ -467,6 +467,7 @@ addr = \"edge-seeddrill-2:9474\""
     image: ${PROXY_IMAGE}
     hostname: proxy
     container_name: cordelia-e2e-proxy
+    user: "0:0"
     ports:
       - "${PROXY_PORT}:3847"
     volumes:
@@ -501,6 +502,7 @@ EOF
     image: ${PORTAL_IMAGE}
     hostname: portal
     container_name: cordelia-e2e-portal
+    user: "0:0"
     ports:
       - "${PORTAL_PORT}:3001"
     volumes:
