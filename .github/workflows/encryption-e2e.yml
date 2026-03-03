@@ -1,0 +1,109 @@
+name: Encryption E2E Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/e2e/encryption-e2e.sh'
+      - 'tests/e2e/lib/proxy-api.sh'
+      - 'tests/e2e/topology-encryption.env'
+      - '.github/workflows/encryption-e2e.yml'
+  workflow_dispatch:
+
+jobs:
+  encryption-e2e:
+    name: Encryption Lifecycle E2E
+    runs-on: [self-hosted, cordelia-docker]
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Checkout proxy repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: seed-drill/cordelia-proxy
+          path: cordelia-proxy
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout portal repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: seed-drill/cordelia-portal
+          path: cordelia-portal
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build node image
+        run: docker build -t cordelia-node:test -f tests/e2e/Dockerfile.test .
+
+      - name: Build proxy image
+        run: docker build -t cordelia-proxy:test -f cordelia-proxy/Dockerfile cordelia-proxy/
+
+      - name: Build portal image
+        run: docker build -t cordelia-portal:test -f cordelia-portal/docker/Dockerfile cordelia-portal/
+
+      - name: Build orchestrator image
+        run: docker build --no-cache -t cordelia-orchestrator -f tests/e2e/Dockerfile.orchestrator tests/e2e/
+
+      - name: Generate encryption topology
+        run: |
+          cp tests/e2e/topology-encryption.env tests/e2e/topology.env
+          bash tests/e2e/gen-compose-zoned.sh
+
+      - name: Start cluster
+        run: docker compose -f tests/e2e/docker-compose.generated.yml up -d --wait
+        timeout-minutes: 5
+
+      - name: Wait for mesh convergence + proxy/portal health
+        run: |
+          echo "Waiting 30s for P2P mesh to stabilize..."
+          sleep 30
+          echo "Checking proxy health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3847/api/health > /dev/null 2>&1; then
+              echo "Proxy healthy"
+              break
+            fi
+            sleep 2
+          done
+          echo "Checking portal health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3001/api/health > /dev/null 2>&1; then
+              echo "Portal healthy"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run encryption E2E tests
+        run: REPORT=1 bash tests/e2e/encryption-e2e.sh
+
+      - name: Capture container logs on failure
+        if: failure()
+        run: |
+          mkdir -p reports/logs
+          for container in proxy portal orchestrator boot1 boot2 edge-alpha-1 edge-bravo-1 keeper-alpha-1 keeper-bravo-1 edge-seeddrill-1 edge-seeddrill-2 keeper-seeddrill-1; do
+            echo "--- ${container} (last 100 lines) ---"
+            docker logs "cordelia-e2e-${container}" --tail 100 2>&1 | tee "reports/logs/${container}.log" || true
+            echo ""
+          done
+
+      - name: Collect reports
+        if: always()
+        run: |
+          mkdir -p reports
+          cp tests/e2e/reports/*.json reports/ 2>/dev/null || true
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: encryption-e2e-reports
+          path: reports/
+          retention-days: 30
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker compose -f tests/e2e/docker-compose.generated.yml down -v --remove-orphans 2>/dev/null || true
+          docker image prune -f 2>/dev/null || true
