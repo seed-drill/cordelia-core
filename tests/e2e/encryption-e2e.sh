@@ -108,44 +108,44 @@ else
 fi
 echo ""
 
-# --- Test 2: Enrollment with PSK distribution [2] ---------------------------
+# --- Test 2: Enrollment with ECIES envelope PSK distribution [2] -------------
 
-echo "[2] Enrollment with PSK distribution..."
+echo "[2] Enrollment with ECIES envelope PSK distribution..."
 T2_START=$(date +%s)
 T2_OK=true
 
-# Create a test session on the portal (bypass OAuth with direct DB insert)
-# Debug: verify SESSION_SECRET matches between test and portal container
-PORTAL_SECRET=$(docker exec cordelia-e2e-portal printenv SESSION_SECRET 2>/dev/null || echo "NOT_SET")
-echo "  DEBUG: test SESSION_SECRET='${SESSION_SECRET}', portal container SECRET='${PORTAL_SECRET}'"
+# Generate an X25519 keypair inside the portal container (has @noble/curves)
+KEYPAIR_JSON=$(docker exec cordelia-e2e-portal node -e "
+    const crypto = require('crypto');
+    const { x25519 } = require('@noble/curves/ed25519');
+    const privBytes = crypto.randomBytes(32);
+    privBytes[0] &= 0xf8;
+    privBytes[31] &= 0x7f;
+    privBytes[31] |= 0x40;
+    const pubBytes = Buffer.from(x25519.scalarMultBase(privBytes));
+    console.log(JSON.stringify({
+        private_key: Buffer.from(privBytes).toString('hex'),
+        public_key: pubBytes.toString('hex')
+    }));
+" 2>/dev/null || echo "{}")
 
+X25519_PRIV=$(echo "$KEYPAIR_JSON" | jq -r '.private_key // empty' 2>/dev/null || echo "")
+X25519_PUB=$(echo "$KEYPAIR_JSON" | jq -r '.public_key // empty' 2>/dev/null || echo "")
+
+if [ -z "$X25519_PUB" ] || [ ${#X25519_PUB} -ne 64 ]; then
+    fail "could not generate X25519 keypair"
+    T2_OK=false
+fi
+
+# Create a test session on the portal
 COOKIE=$(portal_create_session "e2e-enroll-user")
-echo "  DEBUG: portal_create_session returned cookie: '${COOKIE:0:80}'"
 if [ -z "$COOKIE" ]; then
     fail "could not create portal session"
     T2_OK=false
 fi
 
 if $T2_OK; then
-    # Debug: verify session exists in portal DB
-    SESSION_CHECK=$(docker exec cordelia-e2e-portal node -e "
-        const Database = require('better-sqlite3');
-        const db = new Database(process.env.PORTAL_DB || '/data/portal.db');
-        const sessions = db.prepare('SELECT id, entity_id, provider, expires_at FROM sessions').all();
-        db.close();
-        console.log(JSON.stringify(sessions));
-    " 2>&1)
-    echo "  DEBUG: portal sessions in DB: ${SESSION_CHECK:0:300}"
-
     # Step 1: Generate device code
-    # Debug: check auth status first
-    AUTH_CHECK=$(curl -s --max-time 10 -b "portal_session=${COOKIE}" "${PORTAL_URL}/auth/status" 2>/dev/null || echo "{}")
-    AUTH_STATUS=$(echo "$AUTH_CHECK" | jq -r '.authenticated // empty' 2>/dev/null || echo "")
-    if [ "$AUTH_STATUS" != "true" ]; then
-        echo "  DEBUG: auth/status returned: ${AUTH_CHECK}"
-        echo "  DEBUG: cookie value: ${COOKIE}"
-    fi
-
     DEVICE_RESP=$(portal_generate_device_code "$COOKIE" || echo "{}")
     DEVICE_CODE=$(echo "$DEVICE_RESP" | jq -r '.device_code // empty' 2>/dev/null || echo "")
     USER_CODE=$(echo "$DEVICE_RESP" | jq -r '.user_code // empty' 2>/dev/null || echo "")
@@ -159,8 +159,8 @@ if $T2_OK; then
 fi
 
 if $T2_OK; then
-    # Step 2: Verify poll returns pending
-    POLL_RESP=$(portal_poll_device "$DEVICE_CODE" || echo "{}")
+    # Step 2: Poll with X25519 public key submission (simulates device polling)
+    POLL_RESP=$(portal_poll_user "$USER_CODE" "$X25519_PUB" || echo "{}")
     POLL_STATUS=$(echo "$POLL_RESP" | jq -r '.status // empty' 2>/dev/null || echo "")
 
     if [ "$POLL_STATUS" = "authorization_pending" ]; then
@@ -202,14 +202,55 @@ if $T2_OK; then
     if [ -n "$ENVELOPE" ] && [ "$ENVELOPE" != "null" ]; then
         pass "envelope_encrypted_psk present in poll response"
     else
-        # PSK might not be present if no X25519 pub was submitted (expected in manual test)
-        echo "  INFO: envelope_encrypted_psk not present (no X25519 pub submitted)"
+        fail "envelope_encrypted_psk missing (X25519 pub was submitted)"
+        T2_OK=false
     fi
 
     if [ -n "$ACCESS_TOKEN" ] && [ "$ACCESS_TOKEN" != "null" ]; then
         pass "access_token present in poll response"
     else
         echo "  INFO: access_token not present in poll response"
+    fi
+fi
+
+if $T2_OK && [ -n "$ENVELOPE" ] && [ "$ENVELOPE" != "null" ]; then
+    # Step 5: Decrypt the ECIES envelope using our X25519 private key
+    # This proves the full ECIES flow: portal envelope-encrypted the PSK,
+    # and the device can decrypt it with its X25519 private key.
+    DECRYPTED_PSK=$(docker exec cordelia-e2e-portal node -e "
+        const crypto = require('crypto');
+        const { sha256 } = require('@noble/hashes/sha2');
+        const { hkdf } = require('@noble/hashes/hkdf');
+        const { x25519 } = require('@noble/curves/ed25519');
+
+        const envelope = JSON.parse('${ENVELOPE}');
+        const privKey = Buffer.from('${X25519_PRIV}', 'hex');
+
+        const ephPub = Buffer.from(envelope.ephemeralPublicKey, 'base64');
+        const iv = Buffer.from(envelope.iv, 'base64');
+        const authTag = Buffer.from(envelope.authTag, 'base64');
+        const ciphertext = Buffer.from(envelope.ciphertext, 'base64');
+
+        // ECDH
+        const shared = Buffer.from(x25519.scalarMult(privKey, ephPub));
+
+        // HKDF-SHA256
+        const salt = new Uint8Array(32);
+        const info = new TextEncoder().encode('cordelia-key-wrap-v1');
+        const wrappingKey = hkdf(sha256, shared, salt, info, 32);
+
+        // AES-256-GCM decrypt
+        const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(wrappingKey), iv, { authTagLength: 16 });
+        decipher.setAuthTag(authTag);
+        const psk = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+        console.log(psk.toString('hex'));
+    " 2>/dev/null || echo "")
+
+    if [ -n "$DECRYPTED_PSK" ] && [ ${#DECRYPTED_PSK} -eq 64 ]; then
+        pass "ECIES envelope decrypted successfully (PSK: ${DECRYPTED_PSK:0:16}...)"
+    else
+        fail "ECIES envelope decryption failed"
+        T2_OK=false
     fi
 fi
 
