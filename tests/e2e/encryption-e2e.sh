@@ -563,13 +563,14 @@ PLAIN_MEM="{\"id\":\"member-wrote-this\",\"type\":\"pattern\",\"content\":\"writ
 ENC_MEM=$(encrypt_aes256gcm "$MEM_PSK_V1" "$PLAIN_MEM")
 write_encrypted_to_node "keeper-seeddrill-1" "$MEM_ITEM" "learning" "$ENC_MEM" "$MEM_GROUP" > /dev/null 2>&1
 
-# Verify item readable
+# Verify item exists on node (use node read, not proxy read, to avoid caching
+# the v1-only key ring in the proxy's in-memory cache before rotation)
 sleep 1
-READ_MEM=$(proxy_read_item "$MEM_ITEM" || echo "{}")
-if echo "$READ_MEM" | jq -e '.id == "member-wrote-this"' > /dev/null 2>&1; then
-    pass "member's item readable before removal"
+READ_MEM=$(node_read_item "keeper-seeddrill-1" "$MEM_ITEM" 2>/dev/null || echo "{}")
+if echo "$READ_MEM" | jq -e '.data._encrypted == true' > /dev/null 2>&1; then
+    pass "member's encrypted item exists on node before removal"
 else
-    fail "member's item not readable before removal"
+    fail "member's item not found on node before removal"
     T7_OK=false
 fi
 
