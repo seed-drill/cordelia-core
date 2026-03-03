@@ -251,14 +251,26 @@ portal_create_session() {
                  echo "sess-$(date +%s)-${RANDOM}")
 
     # Create user and session in portal DB via docker exec + node
-    docker exec cordelia-e2e-portal node -e "
+    local db_result
+    db_result=$(docker exec cordelia-e2e-portal node -e "
         const Database = require('better-sqlite3');
-        const db = new Database(process.env.PORTAL_DB || '/data/portal.db');
-        db.exec('INSERT OR IGNORE INTO users (entity_id, display_name) VALUES (\"${entity_id}\", \"E2E Test User\")');
-        db.exec('INSERT INTO sessions (id, entity_id, provider, expires_at) VALUES (\"${session_id}\", \"${entity_id}\", \"test\", datetime(\"now\", \"+7 days\"))');
-        db.close();
-        console.log('ok');
-    " > /dev/null 2>&1
+        const dbPath = process.env.PORTAL_DB || '/data/portal.db';
+        try {
+            const db = new Database(dbPath);
+            db.pragma('journal_mode = WAL');
+            db.exec('INSERT OR IGNORE INTO users (entity_id, display_name) VALUES (\"${entity_id}\", \"E2E Test User\")');
+            db.exec('INSERT INTO sessions (id, entity_id, provider, expires_at) VALUES (\"${session_id}\", \"${entity_id}\", \"test\", datetime(\"now\", \"+7 days\"))');
+            const row = db.prepare('SELECT id FROM sessions WHERE id = ?').get('${session_id}');
+            db.close();
+            console.log(row ? 'ok' : 'VERIFY_FAIL');
+        } catch(e) {
+            console.error('DB_ERROR: ' + e.message);
+            process.exit(1);
+        }
+    " 2>&1)
+    if [ "$db_result" != "ok" ]; then
+        echo "  DEBUG portal_create_session: ${db_result}" >&2
+    fi
 
     # Return the signed cookie value
     sign_cookie "$session_id" "$SESSION_SECRET"

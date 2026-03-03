@@ -114,30 +114,35 @@ T2_START=$(date +%s)
 T2_OK=true
 
 # Create a test session on the portal (bypass OAuth with direct DB insert)
+# Debug: verify SESSION_SECRET matches between test and portal container
+PORTAL_SECRET=$(docker exec cordelia-e2e-portal printenv SESSION_SECRET 2>/dev/null || echo "NOT_SET")
+echo "  DEBUG: test SESSION_SECRET='${SESSION_SECRET}', portal container SECRET='${PORTAL_SECRET}'"
+
 COOKIE=$(portal_create_session "e2e-enroll-user")
+echo "  DEBUG: portal_create_session returned cookie: '${COOKIE:0:80}'"
 if [ -z "$COOKIE" ]; then
     fail "could not create portal session"
     T2_OK=false
 fi
 
 if $T2_OK; then
+    # Debug: verify session exists in portal DB
+    SESSION_CHECK=$(docker exec cordelia-e2e-portal node -e "
+        const Database = require('better-sqlite3');
+        const db = new Database(process.env.PORTAL_DB || '/data/portal.db');
+        const sessions = db.prepare('SELECT id, entity_id, provider, expires_at FROM sessions').all();
+        db.close();
+        console.log(JSON.stringify(sessions));
+    " 2>&1)
+    echo "  DEBUG: portal sessions in DB: ${SESSION_CHECK:0:300}"
+
     # Step 1: Generate device code
     # Debug: check auth status first
-    AUTH_CHECK=$(curl -sf --max-time 10 -b "portal_session=${COOKIE}" "${PORTAL_URL}/auth/status" 2>/dev/null || echo "{}")
+    AUTH_CHECK=$(curl -s --max-time 10 -b "portal_session=${COOKIE}" "${PORTAL_URL}/auth/status" 2>/dev/null || echo "{}")
     AUTH_STATUS=$(echo "$AUTH_CHECK" | jq -r '.authenticated // empty' 2>/dev/null || echo "")
     if [ "$AUTH_STATUS" != "true" ]; then
         echo "  DEBUG: auth/status returned: ${AUTH_CHECK}"
         echo "  DEBUG: cookie value: ${COOKIE}"
-        # Try with verbose curl for the device-code call
-        DEVICE_RESP_DBG=$(curl -s --max-time 10 -X POST \
-            -H "Content-Type: application/json" \
-            -b "portal_session=${COOKIE}" \
-            -d '{"scope":"node"}' \
-            -w "\n__HTTP_CODE:%{http_code}" \
-            "${PORTAL_URL}/api/enroll/device-code" 2>/dev/null)
-        HTTP_CODE=$(echo "$DEVICE_RESP_DBG" | grep "__HTTP_CODE:" | sed 's/.*__HTTP_CODE://')
-        echo "  DEBUG: device-code HTTP status: ${HTTP_CODE}"
-        echo "  DEBUG: device-code response: $(echo "$DEVICE_RESP_DBG" | grep -v "__HTTP_CODE:")"
     fi
 
     DEVICE_RESP=$(portal_generate_device_code "$COOKIE" || echo "{}")
@@ -269,9 +274,23 @@ if $T3_OK; then
 fi
 
 if $T3_OK; then
+    # Debug: verify proxy can reach the Rust node
+    CORE_STATUS=$(curl -s --max-time 5 "${PROXY_URL}/api/core/status" 2>/dev/null || echo "{}")
+    echo "  DEBUG: proxy /api/core/status: $(echo "$CORE_STATUS" | jq -c '{node_healthy: .node_healthy, connected: .connected, storage: .storage}' 2>/dev/null || echo "$CORE_STATUS")"
+
+    # Debug: verify item exists on node before proxy read
+    NODE_CHECK=$(node_read_item "keeper-seeddrill-1" "$TEST_ITEM_ID" 2>/dev/null || echo "{}")
+    echo "  DEBUG: node l2/read for ${TEST_ITEM_ID}: $(echo "$NODE_CHECK" | jq -c '{has_data: (.data != null), type, meta_group: .meta.group_id, meta_key_ver: .meta.key_version}' 2>/dev/null || echo "parse-error: ${NODE_CHECK:0:200}")"
+
     # Read through proxy -- should decrypt (proxy reads from Rust node with CORDELIA_STORAGE=node)
     sleep 1  # brief pause for node write propagation
-    PROXY_READ=$(proxy_read_item "$TEST_ITEM_ID" || echo "{}")
+
+    # Use verbose curl to capture HTTP status
+    PROXY_RAW=$(curl -s --max-time 10 -w "\n__HTTP_STATUS:%{http_code}" \
+        "${PROXY_URL}/api/l2/item/${TEST_ITEM_ID}" 2>/dev/null)
+    PROXY_HTTP=$(echo "$PROXY_RAW" | grep "__HTTP_STATUS:" | sed 's/.*__HTTP_STATUS://')
+    PROXY_READ=$(echo "$PROXY_RAW" | grep -v "__HTTP_STATUS:")
+    echo "  DEBUG: proxy GET /api/l2/item/${TEST_ITEM_ID} -> HTTP ${PROXY_HTTP}: ${PROXY_READ:0:300}"
 
     if echo "$PROXY_READ" | jq -e '.name == "e2e-enc-test"' > /dev/null 2>&1; then
         pass "proxy decrypted item correctly (name matches)"
@@ -283,7 +302,7 @@ if $T3_OK; then
         fail "proxy returned encrypted blob (decryption failed)"
         T3_OK=false
     else
-        fail "proxy read returned unexpected response: ${PROXY_READ}"
+        fail "proxy read returned unexpected response (HTTP ${PROXY_HTTP}): ${PROXY_READ}"
         T3_OK=false
     fi
 fi
