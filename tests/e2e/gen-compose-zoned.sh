@@ -473,7 +473,7 @@ addr = \"edge-seeddrill-2:9474\""
     volumes:
       - proxy-memory:/app/memory
     environment:
-      - CORDELIA_STORAGE=sqlite
+      - CORDELIA_STORAGE=node
       - CORDELIA_NODE_URL=http://keeper-seeddrill-1:9473
       - CORDELIA_CORE_API=http://keeper-seeddrill-1:9473
       - CORDELIA_NODE_TOKEN=${BEARER_TOKEN}

@@ -122,6 +122,24 @@ fi
 
 if $T2_OK; then
     # Step 1: Generate device code
+    # Debug: check auth status first
+    AUTH_CHECK=$(curl -sf --max-time 10 -b "portal_session=${COOKIE}" "${PORTAL_URL}/auth/status" 2>/dev/null || echo "{}")
+    AUTH_STATUS=$(echo "$AUTH_CHECK" | jq -r '.authenticated // empty' 2>/dev/null || echo "")
+    if [ "$AUTH_STATUS" != "true" ]; then
+        echo "  DEBUG: auth/status returned: ${AUTH_CHECK}"
+        echo "  DEBUG: cookie value: ${COOKIE}"
+        # Try with verbose curl for the device-code call
+        DEVICE_RESP_DBG=$(curl -s --max-time 10 -X POST \
+            -H "Content-Type: application/json" \
+            -b "portal_session=${COOKIE}" \
+            -d '{"scope":"node"}' \
+            -w "\n__HTTP_CODE:%{http_code}" \
+            "${PORTAL_URL}/api/enroll/device-code" 2>/dev/null)
+        HTTP_CODE=$(echo "$DEVICE_RESP_DBG" | grep "__HTTP_CODE:" | sed 's/.*__HTTP_CODE://')
+        echo "  DEBUG: device-code HTTP status: ${HTTP_CODE}"
+        echo "  DEBUG: device-code response: $(echo "$DEVICE_RESP_DBG" | grep -v "__HTTP_CODE:")"
+    fi
+
     DEVICE_RESP=$(portal_generate_device_code "$COOKIE" || echo "{}")
     DEVICE_CODE=$(echo "$DEVICE_RESP" | jq -r '.device_code // empty' 2>/dev/null || echo "")
     USER_CODE=$(echo "$DEVICE_RESP" | jq -r '.user_code // empty' 2>/dev/null || echo "")
@@ -251,15 +269,8 @@ if $T3_OK; then
 fi
 
 if $T3_OK; then
-    # Also write item metadata to proxy's SQLite so it knows the group_id for decryption.
-    # The proxy reads items from its own storage or from the node. We need to ensure
-    # the proxy's storage has the metadata.
-    proxy_db_insert_item "$TEST_ITEM_ID" "learning" "$ENCRYPTED_BLOB" "$TEST_GROUP_ID" "e2e-test" 1
-fi
-
-if $T3_OK; then
-    # Read through proxy -- should decrypt
-    sleep 1  # brief pause for any cache invalidation
+    # Read through proxy -- should decrypt (proxy reads from Rust node with CORDELIA_STORAGE=node)
+    sleep 1  # brief pause for node write propagation
     PROXY_READ=$(proxy_read_item "$TEST_ITEM_ID" || echo "{}")
 
     if echo "$PROXY_READ" | jq -e '.name == "e2e-enc-test"' > /dev/null 2>&1; then
@@ -402,11 +413,7 @@ ENC_B=$(encrypt_aes256gcm "$PSK_B" "$PLAIN_B")
 write_encrypted_to_node "keeper-seeddrill-1" "$ITEM_A" "learning" "$ENC_A" "$GROUP_A" > /dev/null 2>&1
 write_encrypted_to_node "keeper-seeddrill-1" "$ITEM_B" "learning" "$ENC_B" "$GROUP_B" > /dev/null 2>&1
 
-# Insert metadata into proxy SQLite for both items
-proxy_db_insert_item "$ITEM_A" "learning" "$ENC_A" "$GROUP_A" "e2e-test" 1
-proxy_db_insert_item "$ITEM_B" "learning" "$ENC_B" "$GROUP_B" "e2e-test" 1
-
-# Read both items through proxy -- should decrypt correctly
+# Read both items through proxy -- should decrypt correctly (proxy reads from Rust node)
 sleep 1
 READ_A=$(proxy_read_item "$ITEM_A" || echo "{}")
 READ_B=$(proxy_read_item "$ITEM_B" || echo "{}")
@@ -469,9 +476,6 @@ PLAIN_V1='{"type":"learning","subtype":"pattern","name":"rotation-v1","details":
 ENC_V1=$(encrypt_aes256gcm "$ROT_PSK_V1" "$PLAIN_V1")
 write_encrypted_to_node "keeper-seeddrill-1" "$ROT_ITEM_V1" "learning" "$ENC_V1" "$ROT_GROUP" > /dev/null 2>&1
 
-# Insert metadata (key_version=1)
-proxy_db_insert_item "$ROT_ITEM_V1" "learning" "$ENC_V1" "$ROT_GROUP" "e2e-test" 1
-
 # Rotate: add v2 key to the ring
 add_psk_version "$ROT_GROUP" "$ROT_PSK_V2" 2 > /dev/null 2>&1
 
@@ -483,9 +487,6 @@ ROT_ITEM_V2="e2e-rot-v2-${TS}"
 PLAIN_V2='{"type":"learning","subtype":"pattern","name":"rotation-v2","details":"written with key v2","tags":["e2e"]}'
 ENC_V2=$(encrypt_aes256gcm "$ROT_PSK_V2" "$PLAIN_V2")
 write_encrypted_to_node "keeper-seeddrill-1" "$ROT_ITEM_V2" "learning" "$ENC_V2" "$ROT_GROUP" > /dev/null 2>&1
-
-# Insert metadata (key_version=2)
-proxy_db_insert_item "$ROT_ITEM_V2" "learning" "$ENC_V2" "$ROT_GROUP" "e2e-test" 2
 
 sleep 1
 
@@ -542,8 +543,6 @@ PLAIN_MEM='{"type":"learning","subtype":"pattern","name":"member-wrote-this","de
 ENC_MEM=$(encrypt_aes256gcm "$MEM_PSK_V1" "$PLAIN_MEM")
 write_encrypted_to_node "keeper-seeddrill-1" "$MEM_ITEM" "learning" "$ENC_MEM" "$MEM_GROUP" > /dev/null 2>&1
 
-proxy_db_insert_item "$MEM_ITEM" "learning" "$ENC_MEM" "$MEM_GROUP" "e2e-member-alice" 1
-
 # Verify item readable
 sleep 1
 READ_MEM=$(proxy_read_item "$MEM_ITEM" || echo "{}")
@@ -570,8 +569,6 @@ MEM_ITEM2="e2e-member-post-${TS}"
 PLAIN_MEM2='{"type":"learning","subtype":"pattern","name":"post-removal-item","details":"written after alice removed","tags":["e2e"]}'
 ENC_MEM2=$(encrypt_aes256gcm "$MEM_PSK_V2" "$PLAIN_MEM2")
 write_encrypted_to_node "keeper-seeddrill-1" "$MEM_ITEM2" "learning" "$ENC_MEM2" "$MEM_GROUP" > /dev/null 2>&1
-
-proxy_db_insert_item "$MEM_ITEM2" "learning" "$ENC_MEM2" "$MEM_GROUP" "e2e-test" 2
 
 sleep 1
 
