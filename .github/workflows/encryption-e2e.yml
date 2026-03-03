@@ -24,14 +24,14 @@ jobs:
         with:
           repository: seed-drill/cordelia-proxy
           path: cordelia-proxy
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.CROSS_REPO_PAT }}
 
       - name: Checkout portal repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: seed-drill/cordelia-portal
           path: cordelia-portal
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.CROSS_REPO_PAT }}
 
       - name: Build node image
         run: docker build -t cordelia-node:test -f tests/e2e/Dockerfile.test .
