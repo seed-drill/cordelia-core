@@ -418,6 +418,10 @@ strategies map directly to Cordelia's culture policies:
 | `moderate` | Notify members (header only), they fetch on demand | Write-invalidate (MESI) |
 | `taciturn` | No active push, anti-entropy sync only, TTL expiry | Weak consistency (ARM) |
 
+> **Implementation note (2026-03-07):** Only `chatty` and `taciturn` are currently
+> implemented. `moderate` is designed but requires modelling at 50-100 node scale
+> before activation (core#42). The vision remains as described here.
+
 A chatty team Slack channel pushes every message to every member. A
 moderate engineering team notifies of changes and members pull when
 interested. A taciturn public archive makes content available but
@@ -643,7 +647,7 @@ All roles run the same binary. Configuration determines behaviour:
 | Personal | Your laptop, your memory | Default |
 | Bootnode | Always-on peer discovery | Public address, higher uptime |
 | Edge relay | Bridges internal and public groups | Member of both group types |
-| Secret keeper | Shamir shard backup | `capabilities.keeper = true` |
+| Secret keeper | Encrypted blob backup | `capabilities.keeper = true` |
 | Archive | L3 cold store, durable backend | `capabilities.archive = true` |
 
 Roles are advertised in gossip, enabling discovery. An entity looking
@@ -785,8 +789,9 @@ docs/design/game-theory.md Section 10 for the formal treatment.
 
 The node role system creates a natural service market:
 
-- **Secret keepers** provide backup and recovery (Shamir shards,
-  n-of-m reincarnation). Revenue from reliability SLAs.
+- **Secret keepers** provide backup and recovery (encrypted blob
+  replication; Shamir shard infrastructure is deferred to future work).
+  Revenue from reliability SLAs.
 - **Archives** provide long-term durable storage (L3 cold store,
   lineage queries, compliance). Revenue from storage and retrieval.
 - **Edge relays** provide connectivity between internal and public

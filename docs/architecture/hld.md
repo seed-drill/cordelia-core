@@ -991,6 +991,10 @@ TOML file takes precedence over env vars when both are set.
 
 ## 11. What's Already Done vs TODO
 
+> **Note (2026-03-07):** This section was written during R3 planning. Many items
+> listed as TODO have since been completed (enrollment, replication, encryption).
+> See CLAUDE.md and ROADMAP.md for current implementation status.
+
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Rust P2P transport (QUIC) | Done | quinn, self-signed TLS |

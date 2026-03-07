@@ -590,7 +590,7 @@ communicates. The culture is public, inspectable, and human-readable.
 
 ```typescript
 interface GroupCulture {
-  broadcast_eagerness: 'chatty' | 'moderate' | 'taciturn';
+  broadcast_eagerness: 'chatty' | 'moderate' | 'taciturn'; // Note: only chatty and taciturn are implemented. moderate requires scale modelling (core#42).
   ttl_default: number | null; // seconds, null = no expiry
   notification_policy: 'push' | 'notify' | 'silent';
   departure_policy: 'permissive' | 'standard' | 'restrictive';
@@ -616,6 +616,9 @@ valuable memories (frequently accessed) survive beyond TTL; non-valued expire.
   re-encrypted. Nuclear option.
 
 ### 7.2 Example: Seed Drill Group Culture
+
+> **Note:** This example uses `moderate` culture which is not yet implemented.
+> The Seed Drill group currently uses `chatty`. See core#42 for moderate modelling.
 
 ```json
 {
