@@ -1,4 +1,4 @@
-<p><img src="docs/logo.svg" alt="Cordelia" width="48" height="42"></p>
+<p><img src="docs/logo.svg" alt="Cordelia" width="48" height="48"></p>
 
 # Cordelia Core
 
